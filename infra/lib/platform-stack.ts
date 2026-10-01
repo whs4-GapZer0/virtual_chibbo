@@ -180,7 +180,12 @@ export class ChibboFoundationStack extends Stack {
     // Use a version which the deployment region currently offers. CDK 2.177
     // predates this minor, so represent the supported PostgreSQL 16.15 engine
     // explicitly instead of pinning its removed 16.4 constant.
-    this.database = new rds.DatabaseInstance(this, "Postgres", { vpc: this.vpc, vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED }, securityGroups: [dbSg], engine: rds.DatabaseInstanceEngine.postgres({ version: rds.PostgresEngineVersion.of("16.15", "16") }), instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.MICRO), databaseName: "chibbo", credentials: rds.Credentials.fromGeneratedSecret("chibbo_db_admin"), allocatedStorage: 20, maxAllocatedStorage: 100, storageEncrypted: true, backupRetention: Duration.days(7), deletionProtection: true, publiclyAccessible: false, removalPolicy: RemovalPolicy.SNAPSHOT });
+    const postgresEngine = rds.DatabaseInstanceEngine.postgres({ version: rds.PostgresEngineVersion.of("16.15", "16") });
+    const databaseParameters = new rds.ParameterGroup(this, "PostgresParameters", {
+      engine: postgresEngine,
+      parameters: { "rds.force_ssl": "1" },
+    });
+    this.database = new rds.DatabaseInstance(this, "Postgres", { vpc: this.vpc, vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED }, securityGroups: [dbSg], engine: postgresEngine, parameterGroup: databaseParameters, instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.MICRO), databaseName: "chibbo", credentials: rds.Credentials.fromGeneratedSecret("chibbo_db_admin"), allocatedStorage: 20, maxAllocatedStorage: 100, storageEncrypted: true, backupRetention: Duration.days(7), deletionProtection: true, publiclyAccessible: false, removalPolicy: RemovalPolicy.SNAPSHOT });
     this.databaseSecret = this.database.secret!;
     this.runtimeSecret = new secretsmanager.Secret(this, "RuntimeConfig", { secretName: `chibbo/${props.environmentName}/runtime`, generateSecretString: { secretStringTemplate: "{}", generateStringKey: "CHIBBO_DELETION_PEPPER", passwordLength: 48, excludePunctuation: true }, removalPolicy: RemovalPolicy.RETAIN });
     this.migratorDatabaseSecret = new secretsmanager.Secret(this, "MigratorDatabaseCredentials", { secretName: `chibbo/${props.environmentName}/db-migrator`, generateSecretString: { secretStringTemplate: JSON.stringify({ username: "chibbo_migrator" }), generateStringKey: "password", passwordLength: 40, excludePunctuation: true }, removalPolicy: RemovalPolicy.RETAIN });

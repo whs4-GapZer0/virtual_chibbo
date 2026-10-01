@@ -9,6 +9,6 @@ describe("configuration", () => {
   });
   it("enables encrypted database transport only when required", () => {
     const config = loadConfig({ CHIBBO_DELETION_PEPPER: "a".repeat(16), PGHOST: "db.internal", PGDATABASE: "chibbo", PGUSER: "chibbo_app", PGPASSWORD: "secret", PGSSLMODE: "require" });
-    expect(databaseConnectionOptions(config).ssl).toEqual({ rejectUnauthorized: false });
+    expect(databaseConnectionOptions(config).ssl).toEqual({ rejectUnauthorized: true });
   });
 });
