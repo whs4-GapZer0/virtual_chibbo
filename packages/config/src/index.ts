@@ -28,6 +28,6 @@ export function databaseConnectionString(config: AppConfig): string {
   if (missing.length > 0) throw new Error("database configuration is incomplete");
   return `postgresql://${encodeURIComponent(config.PGUSER!)}:${encodeURIComponent(config.PGPASSWORD!)}@${config.PGHOST!}:${config.PGPORT ?? 5432}/${encodeURIComponent(config.PGDATABASE!)}`;
 }
-export function databaseConnectionOptions(config: AppConfig): { connectionString: string; ssl?: { rejectUnauthorized: false } } {
-  return { connectionString: databaseConnectionString(config), ...(config.PGSSLMODE === "require" ? { ssl: { rejectUnauthorized: false as const } } : {}) };
+export function databaseConnectionOptions(config: AppConfig): { connectionString: string; ssl?: { rejectUnauthorized: true } } {
+  return { connectionString: databaseConnectionString(config), ...(config.PGSSLMODE === "require" ? { ssl: { rejectUnauthorized: true as const } } : {}) };
 }

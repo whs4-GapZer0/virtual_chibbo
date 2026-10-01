@@ -25,7 +25,7 @@ function connection(user, password) {
     user,
     password,
     application_name: "chibbo-migrator",
-    ...(process.env.PGSSLMODE === "require" ? { ssl: { rejectUnauthorized: false } } : {})
+    ...(process.env.PGSSLMODE === "require" ? { ssl: { rejectUnauthorized: true } } : {})
   };
 }
 
