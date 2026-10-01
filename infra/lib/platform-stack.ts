@@ -100,6 +100,29 @@ export class ChibboBootstrapStack extends Stack {
     // expose private-key material through DescribeCertificate.
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["acm:DescribeCertificate"], resources: [`arn:${this.partition}:acm:${this.region}:${this.account}:certificate/*`] }));
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["budgets:ViewBudget"], resources: [`arn:${this.partition}:budgets::${this.account}:budget/Chibbo-${props.environmentName}`] }));
+    // The initial expand migration runs as a one-off Fargate task after a
+    // protected change record is supplied.  Limit task execution and task
+    // inspection to the generated Chibbo migrator definition and Foundation
+    // cluster; it cannot launch an arbitrary workload.
+    const ecsArn = `arn:${this.partition}:ecs:${this.region}:${this.account}`;
+    const migrationTaskDefinition = `${ecsArn}:task-definition/ChibboMigrator${props.environmentName.charAt(0).toUpperCase()}${props.environmentName.slice(1)}MigrationTask*`;
+    const foundationCluster = `${ecsArn}:cluster/${foundationStackName}-Cluster*`;
+    this.githubDeployRole.addToPolicy(new iam.PolicyStatement({
+      actions: ["ecs:RunTask"], resources: [migrationTaskDefinition],
+      conditions: { ArnLike: { "ecs:cluster": foundationCluster } },
+    }));
+    this.githubDeployRole.addToPolicy(new iam.PolicyStatement({
+      actions: ["ecs:DescribeTasks"], resources: [`${ecsArn}:task/${foundationStackName}-Cluster*/*`],
+      conditions: { ArnLike: { "ecs:cluster": foundationCluster } },
+    }));
+    this.githubDeployRole.addToPolicy(new iam.PolicyStatement({
+      actions: ["iam:PassRole"],
+      resources: [
+        `arn:${this.partition}:iam::${this.account}:role/ChibboMigrator${props.environmentName.charAt(0).toUpperCase()}${props.environmentName.slice(1)}-MigrationTaskRole*`,
+        `arn:${this.partition}:iam::${this.account}:role/ChibboMigrator${props.environmentName.charAt(0).toUpperCase()}${props.environmentName.slice(1)}-MigrationTaskExecutionRole*`,
+      ],
+      conditions: { StringEquals: { "iam:PassedToService": "ecs-tasks.amazonaws.com" } },
+    }));
     new CfnOutput(this, "GithubDeployRoleArn", { value: this.githubDeployRole.roleArn });
     new CfnOutput(this, "CloudFormationExecutionRoleArn", { value: this.cloudFormationExecutionRole.roleArn });
     new CfnOutput(this, "DeploymentAssetsBucketName", { value: this.deploymentAssetsBucket.bucketName });
