@@ -49,6 +49,7 @@ describe("Chibbo staged infrastructure", () => {
     expect(json).toContain("ecs:RunTask");
     expect(json).toContain("ChibboMigratorTestMigrationTask");
     expect(json).toContain("ecs-tasks.amazonaws.com");
+    expect(json).toContain("ecr:BatchGetImage");
     expect(json).not.toContain("AdministratorAccess");
   });
 
