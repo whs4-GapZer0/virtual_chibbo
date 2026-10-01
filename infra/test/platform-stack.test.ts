@@ -40,6 +40,8 @@ describe("Chibbo staged infrastructure", () => {
     expect(json).toContain("cloudformation/*");
     expect(json).toContain("cloudformation:GetTemplateSummary");
     expect(json).toContain("iam:PassRole");
+    expect(json).toContain("ChibboFoundationTest-ConfigRecorderRole");
+    expect(json).toContain("config.amazonaws.com");
     expect(json).not.toContain("AdministratorAccess");
   });
 
