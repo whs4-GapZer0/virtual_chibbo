@@ -22,9 +22,8 @@ describe("Chibbo staged infrastructure", () => {
     expect(json).toContain("10.84.0.0/16");
     expect(json).toContain("chibbo_db_admin");
     expect(json).toContain("AWS::S3::Object");
-    expect(json).toContain("INCLUSION_BY_RESOURCE_TYPES");
-    expect(json).toContain("VPC_FLOW_LOGS_ENABLED");
-    expect(json).toContain("StartedOnCreate");
+    expect(json).toContain("ConfigHistoryBucket");
+    expect(json).toContain("ConfigRecorderRole");
     expect(json).toContain("GapZeroReadOnlyRole");
     expect(json).toContain("gapzero-ec2-runtime");
   });

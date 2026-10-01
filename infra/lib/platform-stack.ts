@@ -1,7 +1,6 @@
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as accessanalyzer from "aws-cdk-lib/aws-accessanalyzer";
 import * as cloudtrail from "aws-cdk-lib/aws-cloudtrail";
-import * as config from "aws-cdk-lib/aws-config";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as ecr from "aws-cdk-lib/aws-ecr";
 import * as ecs from "aws-cdk-lib/aws-ecs";
@@ -46,7 +45,6 @@ export class ChibboBootstrapStack extends Stack {
         "acm:DescribeCertificate",
         "access-analyzer:*",
         "cloudtrail:*",
-        "config:*",
         "ec2:*",
         "ecr:*",
         "ecs:*",
@@ -73,6 +71,7 @@ export class ChibboBootstrapStack extends Stack {
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["ecr:BatchCheckLayerAvailability", "ecr:CompleteLayerUpload", "ecr:DescribeImages", "ecr:InitiateLayerUpload", "ecr:PutImage", "ecr:UploadLayerPart"], resources: [this.formatArn({ service: "ecr", resource: "repository", resourceName: `chibbo-platform-${props.environmentName}` })] }));
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["s3:GetBucketLocation", "s3:ListBucket"], resources: [this.deploymentAssetsBucket.bucketArn] }));
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["s3:GetObject", "s3:PutObject"], resources: [this.deploymentAssetsBucket.arnForObjects("cloudformation/*")] }));
+    this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["config:Describe*", "config:PutConfigRule", "config:PutConfigurationRecorder", "config:PutDeliveryChannel", "config:StartConfigurationRecorder"], resources: ["*"] }));
     new CfnOutput(this, "GithubDeployRoleArn", { value: this.githubDeployRole.roleArn });
     new CfnOutput(this, "CloudFormationExecutionRoleArn", { value: this.cloudFormationExecutionRole.roleArn });
     new CfnOutput(this, "DeploymentAssetsBucketName", { value: this.deploymentAssetsBucket.bucketName });
@@ -143,43 +142,6 @@ export class ChibboFoundationStack extends Stack {
       resources: [configBucket.arnForObjects(`AWSLogs/${this.account}/*`)],
       conditions: { StringEquals: { "s3:x-amz-acl": "bucket-owner-full-control", "AWS:SourceAccount": this.account } },
     }));
-    const recorder = new config.CfnConfigurationRecorder(this, "ConfigurationRecorder", {
-      name: `chibbo-${props.environmentName}-recorder`,
-      roleArn: configRole.roleArn,
-      recordingMode: { recordingFrequency: "DAILY" },
-      recordingGroup: {
-        allSupported: false,
-        includeGlobalResourceTypes: false,
-        recordingStrategy: { useOnly: "INCLUSION_BY_RESOURCE_TYPES" },
-        resourceTypes: [
-          "AWS::CloudTrail::Trail", "AWS::EC2::FlowLog", "AWS::EC2::NetworkAcl", "AWS::EC2::RouteTable", "AWS::EC2::SecurityGroup", "AWS::EC2::Subnet", "AWS::EC2::VPC",
-          "AWS::ECR::Repository", "AWS::ECS::Cluster", "AWS::ECS::Service", "AWS::RDS::DBInstance", "AWS::S3::Bucket",
-        ],
-      },
-    });
-    // CloudFormation otherwise waits for the recorder to start before it can
-    // create the single delivery channel.  The deployment workflow starts it
-    // explicitly after that channel exists.
-    recorder.addPropertyOverride("StartedOnCreate", false);
-    const deliveryChannel = new config.CfnDeliveryChannel(this, "ConfigurationDeliveryChannel", {
-      name: `chibbo-${props.environmentName}-delivery`,
-      s3BucketName: configBucket.bucketName,
-      s3KeyPrefix: "config",
-      configSnapshotDeliveryProperties: { deliveryFrequency: "TwentyFour_Hours" },
-    });
-    deliveryChannel.addDependency(recorder);
-    const chibboScope = (resourceType: string): config.CfnConfigRule.ScopeProperty => ({
-      complianceResourceTypes: [resourceType], tagKey: "Project", tagValue: TAGS.Project,
-    });
-    const managedRule = (id: string, ruleName: string, sourceIdentifier: string, resourceType: string): void => {
-      const rule = new config.CfnConfigRule(this, id, { configRuleName: ruleName, source: { owner: "AWS", sourceIdentifier }, scope: chibboScope(resourceType) });
-      rule.addDependency(deliveryChannel);
-    };
-    managedRule("S3PublicReadRule", `chibbo-${props.environmentName}-s3-public-read`, "S3_BUCKET_PUBLIC_READ_PROHIBITED", "AWS::S3::Bucket");
-    managedRule("S3PublicWriteRule", `chibbo-${props.environmentName}-s3-public-write`, "S3_BUCKET_PUBLIC_WRITE_PROHIBITED", "AWS::S3::Bucket");
-    managedRule("RdsStorageEncryptionRule", `chibbo-${props.environmentName}-rds-storage-encrypted`, "RDS_STORAGE_ENCRYPTED", "AWS::RDS::DBInstance");
-    managedRule("RdsPublicAccessRule", `chibbo-${props.environmentName}-rds-not-public`, "RDS_INSTANCE_PUBLIC_ACCESS_CHECK", "AWS::RDS::DBInstance");
-    managedRule("VpcFlowLogsRule", `chibbo-${props.environmentName}-vpc-flow-logs`, "VPC_FLOW_LOGS_ENABLED", "AWS::EC2::VPC");
     new accessanalyzer.CfnAnalyzer(this, "ExternalAccessAnalyzer", {
       analyzerName: `chibbo-${props.environmentName}-external-access`, type: "ACCOUNT",
       tags: Object.entries({ ...TAGS, Environment: props.environmentName }).map(([key, value]) => ({ key, value })),
@@ -227,8 +189,9 @@ export class ChibboFoundationStack extends Stack {
     new CfnOutput(this, "MigratorDatabaseSecretName", { value: this.migratorDatabaseSecret.secretName });
     new CfnOutput(this, "ApplicationDatabaseSecretName", { value: this.applicationDatabaseSecret.secretName });
     new CfnOutput(this, "CloudTrailScope", { value: "resume S3 object data events only; management events excluded" });
-    new CfnOutput(this, "ConfigurationRecorderName", { value: recorder.name! });
+    new CfnOutput(this, "ConfigurationRecorderName", { value: `chibbo-${props.environmentName}-recorder` });
     new CfnOutput(this, "ConfigurationHistoryBucketName", { value: configBucket.bucketName });
+    new CfnOutput(this, "ConfigurationRecorderRoleArn", { value: configRole.roleArn });
     new CfnOutput(this, "GapZeroReadOnlyRoleArn", { value: targetReadRole.roleArn });
   }
 }
