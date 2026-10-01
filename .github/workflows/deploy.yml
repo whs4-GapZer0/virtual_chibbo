@@ -93,7 +93,10 @@ jobs:
         run: |
           repository_uri="$(aws cloudformation describe-stacks --stack-name ChibboRegistryDev --query 'Stacks[0].Outputs[?OutputKey==`PlatformRepositoryUri`].OutputValue' --output text)"
           aws ecr get-login-password | docker login --username AWS --password-stdin "${repository_uri%/*}"
-          docker build --pull --tag "${repository_uri}:${GITHUB_SHA}" .
+          # ECR tags are immutable. Disable BuildKit provenance/SBOM sidecar
+          # manifests here so the commit tag names the runnable image rather
+          # than an attestation artifact.
+          docker build --pull --provenance=false --sbom=false --tag "${repository_uri}:${GITHUB_SHA}" .
           docker push "${repository_uri}:${GITHUB_SHA}"
           digest="$(aws ecr describe-images --repository-name chibbo-platform-dev --image-ids imageTag="${GITHUB_SHA}" --query 'imageDetails[0].imageDigest' --output text)"
           test -n "$digest" && test "$digest" != "None"
