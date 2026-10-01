@@ -42,6 +42,10 @@ describe("Chibbo staged infrastructure", () => {
     expect(json).toContain("iam:PassRole");
     expect(json).toContain("ChibboFoundationTest-ConfigRecorderRole");
     expect(json).toContain("config.amazonaws.com");
+    expect(json).toContain("secretsmanager:DescribeSecret");
+    expect(json).toContain("chibbo/test/entra-*");
+    expect(json).toContain("acm:DescribeCertificate");
+    expect(json).toContain("budgets:ViewBudget");
     expect(json).not.toContain("AdministratorAccess");
   });
 
