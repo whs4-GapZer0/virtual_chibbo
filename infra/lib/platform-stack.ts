@@ -151,8 +151,12 @@ export class ChibboMigratorStack extends Stack {
     const migratorDbSecret = secretsmanager.Secret.fromSecretNameV2(this, "MigratorDbSecret", props.migratorDbSecretName);
     const appDbSecret = secretsmanager.Secret.fromSecretNameV2(this, "AppDbSecret", props.appDbSecretName);
     const role = new iam.Role(this, "MigrationTaskRole", { assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com") });
-    for (const secret of [runtimeSecret, props.foundation.databaseSecret, migratorDbSecret, appDbSecret]) secret.grantRead(role);
-    this.taskDefinition = new ecs.FargateTaskDefinition(this, "MigrationTask", { cpu: 512, memoryLimitMiB: 1024, taskRole: role });
+    const executionRole = new iam.Role(this, "MigrationTaskExecutionRole", { assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com") });
+    executionRole.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName("service-role/AmazonECSTaskExecutionRolePolicy"));
+    // ECS retrieves the private image and injects container secrets before the
+    // task process starts, so these grants belong to the execution role.
+    for (const secret of [runtimeSecret, props.foundation.databaseSecret, migratorDbSecret, appDbSecret]) secret.grantRead(executionRole);
+    this.taskDefinition = new ecs.FargateTaskDefinition(this, "MigrationTask", { cpu: 512, memoryLimitMiB: 1024, taskRole: role, executionRole });
     const container = this.taskDefinition.addContainer("Migrator", { image: imageFor(props.repository, props.imageDigest), logging: ecs.LogDrivers.awsLogs({ logGroup: props.foundation.appLogGroup, streamPrefix: "migrator" }), command: ["node", "apps/platform/scripts/migrate-db.mjs"] });
     container.addEnvironment("CHIBBO_DB_ADMIN_HOST", props.foundation.database.dbInstanceEndpointAddress);
     container.addEnvironment("CHIBBO_DB_ADMIN_PORT", props.foundation.database.dbInstanceEndpointPort);
@@ -175,7 +179,9 @@ export class ChibboApplicationStack extends Stack {
     const executionRole = new iam.Role(this, "TaskExecutionRole", { assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com") });
     executionRole.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName("service-role/AmazonECSTaskExecutionRolePolicy"));
     const taskRole = new iam.Role(this, "ApplicationTaskRole", { assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com") });
-    for (const secret of [runtimeSecret, appDbSecret, entraSecret]) secret.grantRead(taskRole);
+    // Secrets are injected by ECS; the application process itself only needs
+    // its narrowly scoped S3/KMS permissions below.
+    for (const secret of [runtimeSecret, appDbSecret, entraSecret]) secret.grantRead(executionRole);
     taskRole.addToPolicy(new iam.PolicyStatement({ actions: ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"], resources: [props.foundation.resumeBucket.arnForObjects("quarantine/*"), props.foundation.resumeBucket.arnForObjects("accepted/*")] }));
     taskRole.addToPolicy(new iam.PolicyStatement({ actions: ["s3:ListBucket"], resources: [props.foundation.resumeBucket.bucketArn], conditions: { StringLike: { "s3:prefix": ["quarantine/*", "accepted/*"] } } }));
     props.foundation.resumeKey.grantEncryptDecrypt(taskRole);
