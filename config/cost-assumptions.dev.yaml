@@ -20,5 +20,6 @@ logging:
   flowRetentionDays: 30
   trailRetentionDays: 365
 budget:
-  monthlyUsd: REQUIRED_AT_DEPLOY
-  notificationEmails: REQUIRED_AT_DEPLOY
+  monthlyUsd: 150
+  # Recipients live in AWS Budgets and are intentionally not committed to this public repository.
+  notificationEmails: configured_in_aws_budgets
