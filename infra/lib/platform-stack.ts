@@ -160,7 +160,11 @@ export class ChibboFoundationStack extends Stack {
         "ec2:Describe*", "ecr:Describe*", "ecs:Describe*", "ecs:List*",
         "iam:GenerateCredentialReport", "iam:GetCredentialReport", "iam:Get*", "iam:List*",
         "logs:Describe*", "logs:FilterLogEvents", "logs:GetLogEvents", "logs:GetQueryResults", "logs:StartQuery", "logs:StopQuery",
-        "rds:Describe*", "s3:GetBucket*", "s3:ListAllMyBuckets", "tag:GetResources",
+        // The S3 GetBucketEncryption API is authorized as
+        // s3:GetEncryptionConfiguration, not as a GetBucket* action.
+        // Keep this explicit so GapZer0 can evaluate encryption without
+        // granting object reads or KMS decrypt permission.
+        "rds:Describe*", "s3:GetBucket*", "s3:GetEncryptionConfiguration", "s3:ListAllMyBuckets", "tag:GetResources",
       ],
       resources: ["*"],
     }));
