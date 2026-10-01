@@ -24,7 +24,8 @@ function connection(user, password) {
     database: required("CHIBBO_DATABASE_NAME"),
     user,
     password,
-    application_name: "chibbo-migrator"
+    application_name: "chibbo-migrator",
+    ...(process.env.PGSSLMODE === "require" ? { ssl: { rejectUnauthorized: false } } : {})
   };
 }
 

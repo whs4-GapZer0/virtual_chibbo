@@ -7,6 +7,7 @@ const schema = z.object({
   PGDATABASE: z.string().min(1).optional(),
   PGUSER: z.string().min(1).optional(),
   PGPASSWORD: z.string().min(1).optional(),
+  PGSSLMODE: z.enum(["disable", "require"]).default("disable"),
   CHIBBO_STORAGE_MODE: z.enum(["local", "s3"]).default("local"),
   CHIBBO_LOCAL_STORAGE_DIR: z.string().default(".local-storage"),
   CHIBBO_RESUME_BUCKET: z.string().min(3).optional(),
@@ -26,4 +27,7 @@ export function databaseConnectionString(config: AppConfig): string {
   const missing = ["PGHOST", "PGDATABASE", "PGUSER", "PGPASSWORD"].filter((key) => !config[key as keyof AppConfig]);
   if (missing.length > 0) throw new Error("database configuration is incomplete");
   return `postgresql://${encodeURIComponent(config.PGUSER!)}:${encodeURIComponent(config.PGPASSWORD!)}@${config.PGHOST!}:${config.PGPORT ?? 5432}/${encodeURIComponent(config.PGDATABASE!)}`;
+}
+export function databaseConnectionOptions(config: AppConfig): { connectionString: string; ssl?: { rejectUnauthorized: false } } {
+  return { connectionString: databaseConnectionString(config), ...(config.PGSSLMODE === "require" ? { ssl: { rejectUnauthorized: false as const } } : {}) };
 }

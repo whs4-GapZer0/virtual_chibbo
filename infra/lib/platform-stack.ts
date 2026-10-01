@@ -164,6 +164,7 @@ export class ChibboMigratorStack extends Stack {
     container.addEnvironment("CHIBBO_DB_ADMIN_HOST", props.foundation.database.dbInstanceEndpointAddress);
     container.addEnvironment("CHIBBO_DB_ADMIN_PORT", props.foundation.database.dbInstanceEndpointPort);
     container.addEnvironment("CHIBBO_DATABASE_NAME", "chibbo");
+    container.addEnvironment("PGSSLMODE", "require");
     container.addSecret("CHIBBO_DB_ADMIN_USER", ecs.Secret.fromSecretsManager(props.foundation.databaseSecret, "username"));
     container.addSecret("CHIBBO_DB_ADMIN_PASSWORD", ecs.Secret.fromSecretsManager(props.foundation.databaseSecret, "password"));
     container.addSecret("CHIBBO_MIGRATOR_DB_PASSWORD", ecs.Secret.fromSecretsManager(migratorDbSecret, "password"));
@@ -194,6 +195,7 @@ export class ChibboApplicationStack extends Stack {
     });
     const container = task.addContainer("Platform", { image: imageFor(props.repository, props.imageDigest), logging: ecs.LogDrivers.awsLogs({ logGroup: props.foundation.appLogGroup, streamPrefix: "platform" }), portMappings: [{ containerPort: 3000 }], environment: { NODE_ENV: "production", NEXT_PUBLIC_APP_ORIGIN: props.appOrigin, CHIBBO_STORAGE_MODE: "s3", CHIBBO_RESUME_BUCKET: props.foundation.resumeBucket.bucketName, CHIBBO_RESUME_KMS_KEY_ID: props.foundation.resumeKey.keyArn, ENTRA_TENANT_ID: props.entraTenantId, ENTRA_CLIENT_ID: props.entraClientId, ENTRA_ISSUER: props.entraIssuer }, secrets: { CHIBBO_DELETION_PEPPER: ecs.Secret.fromSecretsManager(runtimeSecret, "CHIBBO_DELETION_PEPPER"), ENTRA_CLIENT_SECRET: ecs.Secret.fromSecretsManager(entraSecret, "ENTRA_CLIENT_SECRET") } });
     addDatabaseEnvironment(container, props.foundation, appDbSecret);
+    container.addEnvironment("PGSSLMODE", "require");
     const service = new ecs.FargateService(this, "Service", { cluster: props.foundation.cluster, taskDefinition: task, desiredCount: 1, minHealthyPercent: 100, maxHealthyPercent: 200, assignPublicIp: false, securityGroups: [props.foundation.appSecurityGroup], vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS } });
     const alb = new elbv2.ApplicationLoadBalancer(this, "Alb", { vpc: props.foundation.vpc, internetFacing: true, securityGroup: props.foundation.loadBalancerSecurityGroup });
     const listener = alb.addListener("Https", { port: 443, open: false, protocol: elbv2.ApplicationProtocol.HTTPS, certificates: [acm.Certificate.fromCertificateArn(this, "Certificate", props.certificateArn)] });

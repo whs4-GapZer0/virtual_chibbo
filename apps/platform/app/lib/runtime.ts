@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 import { assertTransition, hashDeletionSecret, generateDeletionSecret, signDraftCapability, verifyDraftCapability } from "@chibbo/domain";
-import { databaseConnectionString, loadConfig } from "@chibbo/config";
+import { databaseConnectionOptions, loadConfig } from "@chibbo/config";
 import { createProductionUploadPost, localOnlyUploadPolicy, verifyAndPromoteVersion, compensatePromotion, getAcceptedResume } from "@chibbo/storage";
 import { randomUUID } from "node:crypto";
 import { S3Client } from "@aws-sdk/client-s3";
@@ -10,7 +10,7 @@ import { createOpaqueSessionToken, hashSessionToken, principalFromMembership, ty
 import { anonymousKey, consumePostgresWindow } from "@chibbo/rate-limit";
 
 let pool: Pool | undefined;
-function database(): Pool { return (pool ??= new Pool({ connectionString: databaseConnectionString(loadConfig()), max: 5 })); }
+function database(): Pool { return (pool ??= new Pool({ ...databaseConnectionOptions(loadConfig()), max: 5 })); }
 function productionStorage() { const config = loadConfig(); if (config.CHIBBO_STORAGE_MODE !== "s3" || !config.CHIBBO_RESUME_BUCKET || !config.CHIBBO_RESUME_KMS_KEY_ID) throw new Error("S3 resume storage is not configured"); return { bucket: config.CHIBBO_RESUME_BUCKET, kmsKeyId: config.CHIBBO_RESUME_KMS_KEY_ID, client: new S3Client({}) }; }
 export type DraftInput = { companySlug: string; jobSlug: string; applicantName: string; applicantEmail: string; privacyNoticeVersion: string; mediaType: string };
 export async function createDraft(input: DraftInput) {
