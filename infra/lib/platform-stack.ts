@@ -157,6 +157,10 @@ export class ChibboFoundationStack extends Stack {
         ],
       },
     });
+    // CloudFormation otherwise waits for the recorder to start before it can
+    // create the single delivery channel.  The deployment workflow starts it
+    // explicitly after that channel exists.
+    recorder.addPropertyOverride("StartedOnCreate", false);
     const deliveryChannel = new config.CfnDeliveryChannel(this, "ConfigurationDeliveryChannel", {
       name: `chibbo-${props.environmentName}-delivery`,
       s3BucketName: configBucket.bucketName,
