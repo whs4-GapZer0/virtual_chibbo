@@ -1,0 +1,101 @@
+{
+  "retrievedAt": "2026-10-01T09:47:30Z",
+  "source": {
+    "service": "AWS Price List Query API",
+    "queryRegion": "us-east-1",
+    "pricedRegion": "ap-northeast-2",
+    "currency": "USD"
+  },
+  "deployedFoundation": {
+    "stack": "ChibboFoundationDev",
+    "rds": {
+      "engine": "PostgreSQL",
+      "instanceClass": "db.t4g.micro",
+      "multiAz": false,
+      "storageType": "gp2",
+      "storageGiB": 20
+    },
+    "network": {
+      "natGateways": 1,
+      "applicationLoadBalancers": 1
+    },
+    "ecs": {
+      "vCpu": 0.5,
+      "memoryGiB": 1,
+      "hoursPerMonth": 730
+    }
+  },
+  "observedOnDemandRates": [
+    {
+      "serviceCode": "AmazonECS",
+      "sku": "DS579H2QDYXPJDKE",
+      "usageType": "APN2-Fargate-vCPU-Hours:perCPU",
+      "unit": "hours per vCPU",
+      "usd": 0.04656
+    },
+    {
+      "serviceCode": "AmazonECS",
+      "sku": "KJE68NNYFF2BQG98",
+      "usageType": "APN2-Fargate-GB-Hours",
+      "unit": "hours per GiB",
+      "usd": 0.00511
+    },
+    {
+      "serviceCode": "AmazonRDS",
+      "sku": "ZBMXF2F4CYQ2FT96",
+      "usageType": "APN2-InstanceUsage:db.t4g.micro",
+      "unit": "hours",
+      "usd": 0.025
+    },
+    {
+      "serviceCode": "AmazonRDS",
+      "sku": "9M88EASYZ9G6BMVR",
+      "usageType": "APN2-RDS:GP2-Storage",
+      "unit": "GB-month",
+      "usd": 0.131
+    },
+    {
+      "serviceCode": "AmazonEC2",
+      "sku": "P63FHTYZXQBC6HX5",
+      "usageType": "APN2-NatGateway-Hours",
+      "unit": "hours",
+      "usd": 0.059
+    },
+    {
+      "serviceCode": "AmazonEC2",
+      "sku": "HC3MBQKUG7PB4BYX",
+      "usageType": "APN2-NatGateway-Bytes",
+      "unit": "GB processed",
+      "usd": 0.059
+    },
+    {
+      "serviceCode": "AWSELB",
+      "sku": "VUV9M7PZ543S2SC9",
+      "usageType": "APN2-LoadBalancerUsage",
+      "operation": "LoadBalancing:Application",
+      "unit": "hours",
+      "usd": 0.0225
+    }
+  ],
+  "baselineMonthlyEstimate": {
+    "fargate": 20.7247,
+    "rdsComputeAndStorage": 20.87,
+    "natGateway": 43.365,
+    "applicationLoadBalancer": 16.425,
+    "subtotal": 101.3847,
+    "estimatedNatDataGiB": 5,
+    "notIncluded": [
+      "ALB LCU usage",
+      "S3 request and storage usage",
+      "CloudWatch logs, VPC Flow Logs, and CloudTrail data events",
+      "network data transfer",
+      "backup usage beyond included allowances",
+      "tax"
+    ]
+  },
+  "approvedMonthlyBudgetUsd": 150,
+  "notes": [
+    "This is a development/PoC baseline, not a billing invoice.",
+    "The AWS Budget is deliberately account-wide until the Project cost-allocation tag has been activated and has accumulated billing data; the foundation has no stack-level billing tags yet."
+  ]
+}
