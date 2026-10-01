@@ -139,7 +139,9 @@ export class ChibboFoundationStack extends Stack {
       sid: "AllowConfigToDeliverHistory",
       principals: [new iam.ServicePrincipal("config.amazonaws.com")],
       actions: ["s3:PutObject"],
-      resources: [configBucket.arnForObjects(`AWSLogs/${this.account}/*`)],
+      // The delivery channel uses the explicit `config` prefix, so Config
+      // writes under `config/AWSLogs/<account>/...`, not the bucket root.
+      resources: [configBucket.arnForObjects(`config/AWSLogs/${this.account}/*`)],
       conditions: { StringEquals: { "s3:x-amz-acl": "bucket-owner-full-control", "AWS:SourceAccount": this.account } },
     }));
     new accessanalyzer.CfnAnalyzer(this, "ExternalAccessAnalyzer", {

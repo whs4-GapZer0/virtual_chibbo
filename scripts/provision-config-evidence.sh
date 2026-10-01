@@ -35,16 +35,16 @@ aws configservice put-delivery-channel --delivery-channel "$(jq -cn \
 aws configservice start-configuration-recorder --configuration-recorder-name "$recorder_name"
 
 put_rule() {
-  local name="$1" identifier="$2" resource_type="$3"
+  local name="$1" identifier="$2"
   aws configservice put-config-rule --config-rule "$(jq -cn \
-    --arg name "$name" --arg identifier "$identifier" --arg resource_type "$resource_type" \
-    '{ConfigRuleName:$name,Scope:{ComplianceResourceTypes:[$resource_type],TagKey:"Project",TagValue:"virtual-chibbo"},Source:{Owner:"AWS",SourceIdentifier:$identifier}}')"
+    --arg name "$name" --arg identifier "$identifier" \
+    '{ConfigRuleName:$name,Scope:{TagKey:"Project",TagValue:"virtual-chibbo"},Source:{Owner:"AWS",SourceIdentifier:$identifier}}')"
 }
-put_rule "chibbo-dev-s3-public-read" "S3_BUCKET_PUBLIC_READ_PROHIBITED" "AWS::S3::Bucket"
-put_rule "chibbo-dev-s3-public-write" "S3_BUCKET_PUBLIC_WRITE_PROHIBITED" "AWS::S3::Bucket"
-put_rule "chibbo-dev-rds-storage-encrypted" "RDS_STORAGE_ENCRYPTED" "AWS::RDS::DBInstance"
-put_rule "chibbo-dev-rds-not-public" "RDS_INSTANCE_PUBLIC_ACCESS_CHECK" "AWS::RDS::DBInstance"
-put_rule "chibbo-dev-vpc-flow-logs" "VPC_FLOW_LOGS_ENABLED" "AWS::EC2::VPC"
+put_rule "chibbo-dev-s3-public-read" "S3_BUCKET_PUBLIC_READ_PROHIBITED"
+put_rule "chibbo-dev-s3-public-write" "S3_BUCKET_PUBLIC_WRITE_PROHIBITED"
+put_rule "chibbo-dev-rds-storage-encrypted" "RDS_STORAGE_ENCRYPTED"
+put_rule "chibbo-dev-rds-not-public" "RDS_INSTANCE_PUBLIC_ACCESS_CHECK"
+put_rule "chibbo-dev-vpc-flow-logs" "VPC_FLOW_LOGS_ENABLED"
 
 for _ in 1 2 3 4 5; do
   recording="$(aws configservice describe-configuration-recorder-status --configuration-recorder-names "$recorder_name" --query 'ConfigurationRecordersStatus[0].recording' --output text)"
