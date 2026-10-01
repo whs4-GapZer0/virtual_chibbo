@@ -8,6 +8,14 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-24.04
+    env:
+      # Synthesis is intentionally offline: these match the checked-in CDK
+      # availability-zone context and do not grant the verification job AWS
+      # credentials.
+      AWS_REGION: ap-northeast-2
+      AWS_DEFAULT_REGION: ap-northeast-2
+      CDK_DEFAULT_ACCOUNT: "992764023398"
+      CDK_DEFAULT_REGION: ap-northeast-2
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

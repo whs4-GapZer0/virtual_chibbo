@@ -89,7 +89,9 @@ export class ChibboFoundationStack extends Stack {
   public readonly applicationDatabaseSecret: secretsmanager.Secret;
   constructor(scope: Construct, id: string, props: ChibboFoundationStackProps) {
     super(scope, id, props); tag(this, props.environmentName);
-    this.vpc = new ec2.Vpc(this, "Vpc", { ipAddresses: ec2.IpAddresses.cidr("10.84.0.0/16"), maxAzs: 2, natGateways: 1, subnetConfiguration: [{ name: "public", subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 }, { name: "app", subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, cidrMask: 24 }, { name: "db", subnetType: ec2.SubnetType.PRIVATE_ISOLATED, cidrMask: 24 }] });
+    // Explicit zones keep CI synthesis offline; the selected zone names were
+    // verified for this account and region before the initial deployment.
+    this.vpc = new ec2.Vpc(this, "Vpc", { ipAddresses: ec2.IpAddresses.cidr("10.84.0.0/16"), availabilityZones: ["ap-northeast-2a", "ap-northeast-2c"], natGateways: 1, subnetConfiguration: [{ name: "public", subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 }, { name: "app", subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, cidrMask: 24 }, { name: "db", subnetType: ec2.SubnetType.PRIVATE_ISOLATED, cidrMask: 24 }] });
     this.vpc.addGatewayEndpoint("S3GatewayEndpoint", { service: ec2.GatewayVpcEndpointAwsService.S3 });
     const auditKey = new kms.Key(this, "AuditKey", { enableKeyRotation: true, removalPolicy: RemovalPolicy.RETAIN, alias: `alias/chibbo/${props.environmentName}/audit` });
     const auditBucket = new s3.Bucket(this, "AuditBucket", { blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL, encryption: s3.BucketEncryption.KMS, encryptionKey: auditKey, enforceSSL: true, versioned: true, removalPolicy: RemovalPolicy.RETAIN });
@@ -110,7 +112,10 @@ export class ChibboFoundationStack extends Stack {
     this.loadBalancerSecurityGroup.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), "HTTPS only");
     this.loadBalancerSecurityGroup.addEgressRule(this.appSecurityGroup, ec2.Port.tcp(3000), "ALB to platform");
     this.appSecurityGroup.addIngressRule(this.loadBalancerSecurityGroup, ec2.Port.tcp(3000), "ALB to platform");
-    this.database = new rds.DatabaseInstance(this, "Postgres", { vpc: this.vpc, vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED }, securityGroups: [dbSg], engine: rds.DatabaseInstanceEngine.postgres({ version: rds.PostgresEngineVersion.VER_16_4 }), databaseName: "chibbo", credentials: rds.Credentials.fromGeneratedSecret("chibbo_db_admin"), allocatedStorage: 20, maxAllocatedStorage: 100, backupRetention: Duration.days(7), deletionProtection: true, publiclyAccessible: false, removalPolicy: RemovalPolicy.SNAPSHOT });
+    // Use a version which the deployment region currently offers. CDK 2.177
+    // predates this minor, so represent the supported PostgreSQL 16.15 engine
+    // explicitly instead of pinning its removed 16.4 constant.
+    this.database = new rds.DatabaseInstance(this, "Postgres", { vpc: this.vpc, vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED }, securityGroups: [dbSg], engine: rds.DatabaseInstanceEngine.postgres({ version: rds.PostgresEngineVersion.of("16.15", "16") }), databaseName: "chibbo", credentials: rds.Credentials.fromGeneratedSecret("chibbo_db_admin"), allocatedStorage: 20, maxAllocatedStorage: 100, backupRetention: Duration.days(7), deletionProtection: true, publiclyAccessible: false, removalPolicy: RemovalPolicy.SNAPSHOT });
     this.databaseSecret = this.database.secret!;
     this.runtimeSecret = new secretsmanager.Secret(this, "RuntimeConfig", { secretName: `chibbo/${props.environmentName}/runtime`, generateSecretString: { secretStringTemplate: "{}", generateStringKey: "CHIBBO_DELETION_PEPPER", passwordLength: 48, excludePunctuation: true }, removalPolicy: RemovalPolicy.RETAIN });
     this.migratorDatabaseSecret = new secretsmanager.Secret(this, "MigratorDatabaseCredentials", { secretName: `chibbo/${props.environmentName}/db-migrator`, generateSecretString: { secretStringTemplate: JSON.stringify({ username: "chibbo_migrator" }), generateStringKey: "password", passwordLength: 40, excludePunctuation: true }, removalPolicy: RemovalPolicy.RETAIN });
