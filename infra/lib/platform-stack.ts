@@ -1,5 +1,7 @@
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
+import * as accessanalyzer from "aws-cdk-lib/aws-accessanalyzer";
 import * as cloudtrail from "aws-cdk-lib/aws-cloudtrail";
+import * as config from "aws-cdk-lib/aws-config";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as ecr from "aws-cdk-lib/aws-ecr";
 import * as ecs from "aws-cdk-lib/aws-ecs";
@@ -33,7 +35,9 @@ export class ChibboBootstrapStack extends Stack {
       sid: "ProvisionChibboInfrastructure",
       actions: [
         "acm:DescribeCertificate",
+        "access-analyzer:*",
         "cloudtrail:*",
+        "config:*",
         "ec2:*",
         "ecr:*",
         "ecs:*",
@@ -103,6 +107,83 @@ export class ChibboFoundationStack extends Stack {
     const auditLogGroup = new logs.LogGroup(this, "AuditLogs", { logGroupName: `/chibbo/${props.environmentName}/audit`, retention: logs.RetentionDays.THREE_MONTHS, removalPolicy: RemovalPolicy.RETAIN });
     const trail = new cloudtrail.Trail(this, "ResumeDataTrail", { bucket: auditBucket, includeGlobalServiceEvents: false, isMultiRegionTrail: false, managementEvents: cloudtrail.ReadWriteType.NONE, sendToCloudWatchLogs: true, cloudWatchLogGroup: auditLogGroup });
     trail.addS3EventSelector([{ bucket: this.resumeBucket }], { readWriteType: cloudtrail.ReadWriteType.ALL });
+    const configBucket = new s3.Bucket(this, "ConfigHistoryBucket", {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      versioned: true,
+      lifecycleRules: [{ noncurrentVersionExpiration: Duration.days(30) }],
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
+    const configRole = new iam.Role(this, "ConfigRecorderRole", { assumedBy: new iam.ServicePrincipal("config.amazonaws.com") });
+    configRole.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName("service-role/AWS_ConfigRole"));
+    configBucket.addToResourcePolicy(new iam.PolicyStatement({
+      sid: "AllowConfigToReadBucketAcl",
+      principals: [new iam.ServicePrincipal("config.amazonaws.com")],
+      actions: ["s3:GetBucketAcl"],
+      resources: [configBucket.bucketArn],
+      conditions: { StringEquals: { "AWS:SourceAccount": this.account } },
+    }));
+    configBucket.addToResourcePolicy(new iam.PolicyStatement({
+      sid: "AllowConfigToDeliverHistory",
+      principals: [new iam.ServicePrincipal("config.amazonaws.com")],
+      actions: ["s3:PutObject"],
+      resources: [configBucket.arnForObjects(`AWSLogs/${this.account}/*`)],
+      conditions: { StringEquals: { "s3:x-amz-acl": "bucket-owner-full-control", "AWS:SourceAccount": this.account } },
+    }));
+    const recorder = new config.CfnConfigurationRecorder(this, "ConfigurationRecorder", {
+      name: `chibbo-${props.environmentName}-recorder`,
+      roleArn: configRole.roleArn,
+      recordingMode: { recordingFrequency: "DAILY" },
+      recordingGroup: {
+        allSupported: false,
+        includeGlobalResourceTypes: false,
+        recordingStrategy: { useOnly: "INCLUSION_BY_RESOURCE_TYPES" },
+        resourceTypes: [
+          "AWS::CloudTrail::Trail", "AWS::EC2::FlowLog", "AWS::EC2::NetworkAcl", "AWS::EC2::RouteTable", "AWS::EC2::SecurityGroup", "AWS::EC2::Subnet", "AWS::EC2::VPC",
+          "AWS::ECR::Repository", "AWS::ECS::Cluster", "AWS::ECS::Service", "AWS::RDS::DBInstance", "AWS::S3::Bucket",
+        ],
+      },
+    });
+    const deliveryChannel = new config.CfnDeliveryChannel(this, "ConfigurationDeliveryChannel", {
+      name: `chibbo-${props.environmentName}-delivery`,
+      s3BucketName: configBucket.bucketName,
+      s3KeyPrefix: "config",
+      configSnapshotDeliveryProperties: { deliveryFrequency: "TwentyFour_Hours" },
+    });
+    deliveryChannel.addDependency(recorder);
+    const chibboScope = (resourceType: string): config.CfnConfigRule.ScopeProperty => ({
+      complianceResourceTypes: [resourceType], tagKey: "Project", tagValue: TAGS.Project,
+    });
+    const managedRule = (id: string, ruleName: string, sourceIdentifier: string, resourceType: string): void => {
+      const rule = new config.CfnConfigRule(this, id, { configRuleName: ruleName, source: { owner: "AWS", sourceIdentifier }, scope: chibboScope(resourceType) });
+      rule.addDependency(deliveryChannel);
+    };
+    managedRule("S3PublicReadRule", `chibbo-${props.environmentName}-s3-public-read`, "S3_BUCKET_PUBLIC_READ_PROHIBITED", "AWS::S3::Bucket");
+    managedRule("S3PublicWriteRule", `chibbo-${props.environmentName}-s3-public-write`, "S3_BUCKET_PUBLIC_WRITE_PROHIBITED", "AWS::S3::Bucket");
+    managedRule("RdsStorageEncryptionRule", `chibbo-${props.environmentName}-rds-storage-encrypted`, "RDS_STORAGE_ENCRYPTED", "AWS::RDS::DBInstance");
+    managedRule("RdsPublicAccessRule", `chibbo-${props.environmentName}-rds-not-public`, "RDS_INSTANCE_PUBLIC_ACCESS_CHECK", "AWS::RDS::DBInstance");
+    managedRule("VpcFlowLogsRule", `chibbo-${props.environmentName}-vpc-flow-logs`, "VPC_FLOW_LOGS_ENABLED", "AWS::EC2::VPC");
+    new accessanalyzer.CfnAnalyzer(this, "ExternalAccessAnalyzer", {
+      analyzerName: `chibbo-${props.environmentName}-external-access`, type: "ACCOUNT",
+      tags: Object.entries({ ...TAGS, Environment: props.environmentName }).map(([key, value]) => ({ key, value })),
+    });
+    const targetReadRole = new iam.Role(this, "GapZeroReadOnlyRole", {
+      roleName: "GapZeroReadOnlyRole",
+      assumedBy: new iam.ArnPrincipal(`arn:${this.partition}:iam::${this.account}:role/gapzero-ec2-runtime`).withConditions({ StringEquals: { "sts:ExternalId": "gapzero-chibbo-readonly-v1" } }),
+    });
+    targetReadRole.addToPolicy(new iam.PolicyStatement({
+      sid: "ReadOnlyChibboPosture",
+      actions: [
+        "access-analyzer:Get*", "access-analyzer:List*", "cloudtrail:Describe*", "cloudtrail:Get*", "cloudtrail:LookupEvents",
+        "config:Describe*", "config:Get*", "config:List*", "config:SelectResourceConfig",
+        "ec2:Describe*", "ecr:Describe*", "ecs:Describe*", "ecs:List*",
+        "iam:GenerateCredentialReport", "iam:GetCredentialReport", "iam:Get*", "iam:List*",
+        "logs:Describe*", "logs:FilterLogEvents", "logs:GetLogEvents", "logs:GetQueryResults", "logs:StartQuery", "logs:StopQuery",
+        "rds:Describe*", "s3:GetBucket*", "s3:ListAllMyBuckets", "tag:GetResources",
+      ],
+      resources: ["*"],
+    }));
     const dbSg = new ec2.SecurityGroup(this, "DatabaseSecurityGroup", { vpc: this.vpc, allowAllOutbound: false });
     this.appSecurityGroup = new ec2.SecurityGroup(this, "AppSecurityGroup", { vpc: this.vpc, allowAllOutbound: false });
     this.loadBalancerSecurityGroup = new ec2.SecurityGroup(this, "LoadBalancerSecurityGroup", { vpc: this.vpc, allowAllOutbound: false });
@@ -130,6 +211,9 @@ export class ChibboFoundationStack extends Stack {
     new CfnOutput(this, "MigratorDatabaseSecretName", { value: this.migratorDatabaseSecret.secretName });
     new CfnOutput(this, "ApplicationDatabaseSecretName", { value: this.applicationDatabaseSecret.secretName });
     new CfnOutput(this, "CloudTrailScope", { value: "resume S3 object data events only; management events excluded" });
+    new CfnOutput(this, "ConfigurationRecorderName", { value: recorder.name! });
+    new CfnOutput(this, "ConfigurationHistoryBucketName", { value: configBucket.bucketName });
+    new CfnOutput(this, "GapZeroReadOnlyRoleArn", { value: targetReadRole.roleArn });
   }
 }
 

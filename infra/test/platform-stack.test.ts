@@ -16,13 +16,16 @@ describe("Chibbo staged infrastructure", () => {
     const { foundation } = foundations();
     const template = Template.fromStack(foundation);
     template.resourceCountIs("AWS::EC2::FlowLog", 1);
+    template.resourceCountIs("AWS::ECS::Service", 0);
     template.hasResourceProperties("AWS::RDS::DBInstance", { DBName: "chibbo", DBInstanceClass: "db.t4g.micro", StorageEncrypted: true, PubliclyAccessible: false });
     const json = JSON.stringify(template.toJSON());
     expect(json).toContain("10.84.0.0/16");
     expect(json).toContain("chibbo_db_admin");
     expect(json).toContain("AWS::S3::Object");
-    expect(json).not.toContain("AWS::ECS::Service");
-    expect(json).not.toContain("gapzero");
+    expect(json).toContain("INCLUSION_BY_RESOURCE_TYPES");
+    expect(json).toContain("VPC_FLOW_LOGS_ENABLED");
+    expect(json).toContain("GapZeroReadOnlyRole");
+    expect(json).toContain("gapzero-ec2-runtime");
   });
 
   it("makes a bootstrap-only GitHub role and CloudFormation execution role", () => {
