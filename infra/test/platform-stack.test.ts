@@ -26,6 +26,7 @@ describe("Chibbo staged infrastructure", () => {
     expect(json).toContain("ConfigRecorderRole");
     expect(json).toContain("GapZeroReadOnlyRole");
     expect(json).toContain("gapzero-ec2-runtime");
+    expect(json).toContain("s3:GetEncryptionConfiguration");
   });
 
   it("makes a bootstrap-only GitHub role and CloudFormation execution role", () => {
