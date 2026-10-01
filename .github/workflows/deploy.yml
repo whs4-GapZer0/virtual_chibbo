@@ -90,9 +90,11 @@ jobs:
       - name: Deploy registry and foundation through the Chibbo-only template bucket
         run: |
           template_dir="$(mktemp -d)"
-          # Construct the existing migrator stack too, so its Foundation
-          # exports are retained while the Foundation template is updated.
-          pnpm --dir infra exec cdk synth --output "$template_dir" -c appOrigin="$APP_ORIGIN" -c releaseMigrator=true -c imageDigest="sha256:0000000000000000000000000000000000000000000000000000000000000000" -c runtimeConfigSecretName="$RUNTIME_CONFIG_SECRET_NAME" -c migratorDbSecretName="$CHIBBO_MIGRATOR_DB_SECRET_NAME" -c appDbSecretName="$CHIBBO_APP_DB_SECRET_NAME"
+          # Construct both release consumers before updating Foundation. CDK
+          # creates cross-stack exports only while a consumer is present; this
+          # preserves the App security-group/VPC exports the later Application
+          # template imports.
+          pnpm --dir infra exec cdk synth --output "$template_dir" -c appOrigin="$APP_ORIGIN" -c releaseMigrator=true -c releaseApplication=true -c imageDigest="sha256:0000000000000000000000000000000000000000000000000000000000000000" -c runtimeConfigSecretName="$RUNTIME_CONFIG_SECRET_NAME" -c migratorDbSecretName="$CHIBBO_MIGRATOR_DB_SECRET_NAME" -c appDbSecretName="$CHIBBO_APP_DB_SECRET_NAME" -c certificateArn="$CERTIFICATE_ARN" -c entraClientSecretName="$ENTRA_CLIENT_SECRET_NAME" -c entraTenantId="$ENTRA_TENANT_ID" -c entraClientId="$ENTRA_CLIENT_ID" -c entraIssuer="$ENTRA_ISSUER"
           aws cloudformation deploy --stack-name ChibboRegistryDev --template-file "$template_dir/ChibboRegistryDev.template.json" --s3-bucket "$CHIBBO_DEPLOYMENT_ASSETS_BUCKET" --s3-prefix cloudformation --capabilities CAPABILITY_NAMED_IAM --role-arn "$CHIBBO_CFN_EXECUTION_ROLE_ARN"
           aws cloudformation deploy --stack-name ChibboFoundationDev --template-file "$template_dir/ChibboFoundationDev.template.json" --s3-bucket "$CHIBBO_DEPLOYMENT_ASSETS_BUCKET" --s3-prefix cloudformation --capabilities CAPABILITY_NAMED_IAM --role-arn "$CHIBBO_CFN_EXECUTION_ROLE_ARN"
       - name: Configure the targeted Chibbo AWS Config recorder and managed rules

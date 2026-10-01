@@ -80,5 +80,12 @@ describe("Chibbo staged infrastructure", () => {
     expect(json).toContain("ARM64");
     expect(json).toContain("quarantine/*");
     expect(json).toContain("accepted/*");
+
+    // Foundation is updated before the application stack in the release
+    // workflow. Its synthesized template must therefore retain every
+    // cross-stack export consumed by the application template.
+    const foundationJson = JSON.stringify(Template.fromStack(foundation).toJSON());
+    expect(foundationJson).toContain("Export");
+    expect(foundationJson).toContain("AppSecurityGroup");
   });
 });
