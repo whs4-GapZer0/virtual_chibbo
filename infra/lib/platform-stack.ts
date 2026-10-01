@@ -88,6 +88,18 @@ export class ChibboBootstrapStack extends Stack {
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["s3:GetBucketLocation", "s3:ListBucket"], resources: [this.deploymentAssetsBucket.bucketArn] }));
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["s3:GetObject", "s3:PutObject"], resources: [this.deploymentAssetsBucket.arnForObjects("cloudformation/*")] }));
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["config:Describe*", "config:PutConfigRule", "config:PutConfigurationRecorder", "config:PutDeliveryChannel", "config:StartConfigurationRecorder"], resources: ["*"] }));
+    // The release gate verifies only that its required secrets exist.  It
+    // never receives secret values, so retain DescribeSecret rather than a
+    // value-read action and scope it to the four Chibbo deployment secrets.
+    const chibboReleaseSecrets = ["runtime", "db-migrator", "db-app", "entra"].map((name) =>
+      `arn:${this.partition}:secretsmanager:${this.region}:${this.account}:secret:chibbo/${props.environmentName}/${name}-*`
+    );
+    this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["secretsmanager:DescribeSecret"], resources: chibboReleaseSecrets }));
+    // The workflow accepts the issued ACM certificate ARN as a protected
+    // deployment input.  It reads certificate metadata only; ACM does not
+    // expose private-key material through DescribeCertificate.
+    this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["acm:DescribeCertificate"], resources: [`arn:${this.partition}:acm:${this.region}:${this.account}:certificate/*`] }));
+    this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["budgets:ViewBudget"], resources: [`arn:${this.partition}:budgets::${this.account}:budget/Chibbo-${props.environmentName}`] }));
     new CfnOutput(this, "GithubDeployRoleArn", { value: this.githubDeployRole.roleArn });
     new CfnOutput(this, "CloudFormationExecutionRoleArn", { value: this.cloudFormationExecutionRole.roleArn });
     new CfnOutput(this, "DeploymentAssetsBucketName", { value: this.deploymentAssetsBucket.bucketName });
