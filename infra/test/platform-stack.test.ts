@@ -33,9 +33,8 @@ describe("Chibbo staged infrastructure", () => {
     const app = new cdk.App({ defaultStackSynthesizer: new cdk.LegacyStackSynthesizer() });
     const stack = new ChibboBootstrapStack(app, "ChibboBootstrapTest", { env: { account: "992764023398", region: "ap-northeast-2" }, environmentName: "test", githubOidcProviderArn: "arn:aws:iam::992764023398:oidc-provider/token.actions.githubusercontent.com", githubOwnerId: "331039235", githubRepositoryId: "1398534215" });
     const json = JSON.stringify(Template.fromStack(stack).toJSON());
-    expect(json).toContain("repository_owner_id");
-    expect(json).toContain("repository_id");
-    expect(json).toContain("environment:chibbo-test");
+    expect(json).toContain("repo:whs4-GapZer0@331039235/virtual_chibbo@1398534215:environment:chibbo-test");
+    expect(json).toContain("token.actions.githubusercontent.com:sub");
     expect(json).toContain("CloudFormationExecutionRole");
     expect(json).toContain("DeploymentAssetsBucket");
     expect(json).toContain("cloudformation/*");
