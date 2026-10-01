@@ -99,16 +99,17 @@ jobs:
         run: bash ./scripts/provision-config-evidence.sh
       - name: Enforce release prerequisites after foundation creates Chibbo secrets
         run: node scripts/deployment-gate.mjs
+      - name: Enable ARM64 image builds
+        uses: docker/setup-qemu-action@v3
       - name: Build, scan, and push immutable platform image
         id: image
         run: |
           repository_uri="$(aws cloudformation describe-stacks --stack-name ChibboRegistryDev --query 'Stacks[0].Outputs[?OutputKey==`PlatformRepositoryUri`].OutputValue' --output text)"
           aws ecr get-login-password | docker login --username AWS --password-stdin "${repository_uri%/*}"
-          # ECR tags are immutable. Disable BuildKit provenance/SBOM sidecar
-          # manifests here so the commit tag names the runnable image rather
-          # than an attestation artifact.
-          docker build --pull --provenance=false --sbom=false --tag "${repository_uri}:${GITHUB_SHA}" .
-          docker push "${repository_uri}:${GITHUB_SHA}"
+          # Fargate task definitions are ARM64.  Build and push that exact
+          # platform from the AMD64 GitHub runner; the immutable commit tag
+          # remains the runnable image rather than an attestation artifact.
+          docker buildx build --pull --platform linux/arm64 --provenance=false --sbom=false --tag "${repository_uri}:${GITHUB_SHA}" --push .
           digest="$(aws ecr describe-images --repository-name chibbo-platform-dev --image-ids imageTag="${GITHUB_SHA}" --query 'imageDetails[0].imageDigest' --output text)"
           test -n "$digest" && test "$digest" != "None"
           printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
