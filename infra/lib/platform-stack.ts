@@ -74,6 +74,15 @@ export class ChibboBootstrapStack extends Stack {
     });
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["cloudformation:CreateChangeSet", "cloudformation:DeleteChangeSet", "cloudformation:DescribeChangeSet", "cloudformation:DescribeStacks", "cloudformation:DescribeStackEvents", "cloudformation:ExecuteChangeSet", "cloudformation:GetTemplateSummary"], resources: [this.formatArn({ service: "cloudformation", resource: "stack", resourceName: "Chibbo*/*" })] }));
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["iam:PassRole"], resources: [this.cloudFormationExecutionRole.roleArn], conditions: { StringEquals: { "iam:PassedToService": "cloudformation.amazonaws.com" } } }));
+    // AWS Config's recorder is configured after the Foundation stack exists.
+    // CDK gives that service role a physical suffix, so constrain PassRole to
+    // this stack's generated recorder role and the Config service only.
+    const foundationStackName = `ChibboFoundation${props.environmentName.charAt(0).toUpperCase()}${props.environmentName.slice(1)}`;
+    this.githubDeployRole.addToPolicy(new iam.PolicyStatement({
+      actions: ["iam:PassRole"],
+      resources: [`arn:${this.partition}:iam::${this.account}:role/${foundationStackName}-ConfigRecorderRole*`],
+      conditions: { StringEquals: { "iam:PassedToService": "config.amazonaws.com" } },
+    }));
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["ecr:GetAuthorizationToken"], resources: ["*"] }));
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["ecr:BatchCheckLayerAvailability", "ecr:CompleteLayerUpload", "ecr:DescribeImages", "ecr:InitiateLayerUpload", "ecr:PutImage", "ecr:UploadLayerPart"], resources: [this.formatArn({ service: "ecr", resource: "repository", resourceName: `chibbo-platform-${props.environmentName}` })] }));
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["s3:GetBucketLocation", "s3:ListBucket"], resources: [this.deploymentAssetsBucket.bucketArn] }));
