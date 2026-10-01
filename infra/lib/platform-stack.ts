@@ -58,11 +58,18 @@ export class ChibboBootstrapStack extends Stack {
       ],
       resources: ["*"]
     }));
+    // GitHub repositories created after 2026-07-15 use immutable OIDC
+    // subject claims. AWS does not evaluate GitHub custom claims, so pin the
+    // standard `sub` claim itself to this owner/repository ID pair and the
+    // protected deployment environment.
+    const githubDeploymentSubject = `repo:whs4-GapZer0@${props.githubOwnerId}/virtual_chibbo@${props.githubRepositoryId}:environment:chibbo-${props.environmentName}`;
     this.githubDeployRole = new iam.Role(this, "GithubDeployRole", {
       roleName: `chibbo-${props.environmentName}-github-deploy`,
       assumedBy: new iam.FederatedPrincipal(provider.openIdConnectProviderArn, {
-        StringEquals: { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com", "token.actions.githubusercontent.com:repository_owner_id": props.githubOwnerId, "token.actions.githubusercontent.com:repository_id": props.githubRepositoryId },
-        StringLike: { "token.actions.githubusercontent.com:sub": `repo:whs4-GapZer0/virtual_chibbo:environment:chibbo-${props.environmentName}` }
+        StringEquals: {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+          "token.actions.githubusercontent.com:sub": githubDeploymentSubject,
+        },
       }, "sts:AssumeRoleWithWebIdentity")
     });
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["cloudformation:CreateChangeSet", "cloudformation:DeleteChangeSet", "cloudformation:DescribeChangeSet", "cloudformation:DescribeStacks", "cloudformation:DescribeStackEvents", "cloudformation:ExecuteChangeSet"], resources: [this.formatArn({ service: "cloudformation", resource: "stack", resourceName: "Chibbo*/*" })] }));
