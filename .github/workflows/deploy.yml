@@ -82,10 +82,19 @@ jobs:
         with:
           role-to-assume: ${{ inputs.deploy_role_arn }}
           aws-region: ${{ env.AWS_REGION }}
-      - name: Deploy registry and foundation without CDK bootstrap assets
-        run: >-
-          pnpm --dir infra exec cdk deploy ChibboRegistryDev ChibboFoundationDev --require-approval never
-          --role-arn "$CHIBBO_CFN_EXECUTION_ROLE_ARN" -c appOrigin="$APP_ORIGIN"
+      - name: Resolve Chibbo-only CloudFormation template bucket
+        run: |
+          bucket="$(aws cloudformation describe-stacks --stack-name ChibboBootstrapDev --query 'Stacks[0].Outputs[?OutputKey==`DeploymentAssetsBucketName`].OutputValue' --output text)"
+          test -n "$bucket" && test "$bucket" != "None"
+          printf 'CHIBBO_DEPLOYMENT_ASSETS_BUCKET=%s\n' "$bucket" >> "$GITHUB_ENV"
+      - name: Deploy registry and foundation through the Chibbo-only template bucket
+        run: |
+          template_dir="$(mktemp -d)"
+          # Construct the existing migrator stack too, so its Foundation
+          # exports are retained while the Foundation template is updated.
+          pnpm --dir infra exec cdk synth --output "$template_dir" -c appOrigin="$APP_ORIGIN" -c releaseMigrator=true -c imageDigest="sha256:0000000000000000000000000000000000000000000000000000000000000000" -c runtimeConfigSecretName="$RUNTIME_CONFIG_SECRET_NAME" -c migratorDbSecretName="$CHIBBO_MIGRATOR_DB_SECRET_NAME" -c appDbSecretName="$CHIBBO_APP_DB_SECRET_NAME"
+          aws cloudformation deploy --stack-name ChibboRegistryDev --template-file "$template_dir/ChibboRegistryDev.template.json" --s3-bucket "$CHIBBO_DEPLOYMENT_ASSETS_BUCKET" --s3-prefix cloudformation --capabilities CAPABILITY_NAMED_IAM --role-arn "$CHIBBO_CFN_EXECUTION_ROLE_ARN"
+          aws cloudformation deploy --stack-name ChibboFoundationDev --template-file "$template_dir/ChibboFoundationDev.template.json" --s3-bucket "$CHIBBO_DEPLOYMENT_ASSETS_BUCKET" --s3-prefix cloudformation --capabilities CAPABILITY_NAMED_IAM --role-arn "$CHIBBO_CFN_EXECUTION_ROLE_ARN"
       - name: Enforce release prerequisites after foundation creates Chibbo secrets
         run: node scripts/deployment-gate.mjs
       - name: Build, scan, and push immutable platform image
@@ -102,19 +111,17 @@ jobs:
           test -n "$digest" && test "$digest" != "None"
           printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
       - name: Deploy digest-pinned migration task definition
-        run: >-
-          pnpm --dir infra exec cdk deploy ChibboMigratorDev --require-approval never --role-arn "$CHIBBO_CFN_EXECUTION_ROLE_ARN"
-          -c releaseMigrator=true -c imageDigest="${{ steps.image.outputs.digest }}"
-          -c runtimeConfigSecretName="$RUNTIME_CONFIG_SECRET_NAME" -c migratorDbSecretName="$CHIBBO_MIGRATOR_DB_SECRET_NAME" -c appDbSecretName="$CHIBBO_APP_DB_SECRET_NAME"
+        run: |
+          template_dir="$(mktemp -d)"
+          pnpm --dir infra exec cdk synth ChibboMigratorDev --output "$template_dir" -c releaseMigrator=true -c imageDigest="${{ steps.image.outputs.digest }}" -c runtimeConfigSecretName="$RUNTIME_CONFIG_SECRET_NAME" -c migratorDbSecretName="$CHIBBO_MIGRATOR_DB_SECRET_NAME" -c appDbSecretName="$CHIBBO_APP_DB_SECRET_NAME"
+          aws cloudformation deploy --stack-name ChibboMigratorDev --template-file "$template_dir/ChibboMigratorDev.template.json" --s3-bucket "$CHIBBO_DEPLOYMENT_ASSETS_BUCKET" --s3-prefix cloudformation --capabilities CAPABILITY_NAMED_IAM --role-arn "$CHIBBO_CFN_EXECUTION_ROLE_ARN"
       - name: Run approved expand migration in its one-off task
         run: bash ./scripts/run-expand-migration.sh
       - name: Deploy digest-pinned application service
-        run: >-
-          pnpm --dir infra exec cdk deploy ChibboApplicationDev --require-approval never --role-arn "$CHIBBO_CFN_EXECUTION_ROLE_ARN"
-          -c releaseApplication=true -c imageDigest="${{ steps.image.outputs.digest }}"
-          -c runtimeConfigSecretName="$RUNTIME_CONFIG_SECRET_NAME" -c migratorDbSecretName="$CHIBBO_MIGRATOR_DB_SECRET_NAME" -c appDbSecretName="$CHIBBO_APP_DB_SECRET_NAME"
-          -c appOrigin="$APP_ORIGIN" -c certificateArn="$CERTIFICATE_ARN" -c entraClientSecretName="$ENTRA_CLIENT_SECRET_NAME"
-          -c entraTenantId="$ENTRA_TENANT_ID" -c entraClientId="$ENTRA_CLIENT_ID" -c entraIssuer="$ENTRA_ISSUER"
+        run: |
+          template_dir="$(mktemp -d)"
+          pnpm --dir infra exec cdk synth ChibboApplicationDev --output "$template_dir" -c releaseApplication=true -c imageDigest="${{ steps.image.outputs.digest }}" -c runtimeConfigSecretName="$RUNTIME_CONFIG_SECRET_NAME" -c migratorDbSecretName="$CHIBBO_MIGRATOR_DB_SECRET_NAME" -c appDbSecretName="$CHIBBO_APP_DB_SECRET_NAME" -c appOrigin="$APP_ORIGIN" -c certificateArn="$CERTIFICATE_ARN" -c entraClientSecretName="$ENTRA_CLIENT_SECRET_NAME" -c entraTenantId="$ENTRA_TENANT_ID" -c entraClientId="$ENTRA_CLIENT_ID" -c entraIssuer="$ENTRA_ISSUER"
+          aws cloudformation deploy --stack-name ChibboApplicationDev --template-file "$template_dir/ChibboApplicationDev.template.json" --s3-bucket "$CHIBBO_DEPLOYMENT_ASSETS_BUCKET" --s3-prefix cloudformation --capabilities CAPABILITY_NAMED_IAM --role-arn "$CHIBBO_CFN_EXECUTION_ROLE_ARN"
       - name: Health and smoke check
         run: bash ./scripts/smoke-deployment.sh
       - name: Keep contract migration separately approved

@@ -23,9 +23,18 @@ export interface ChibboBootstrapStackProps extends StackProps { environmentName:
 export class ChibboBootstrapStack extends Stack {
   public readonly githubDeployRole: iam.Role;
   public readonly cloudFormationExecutionRole: iam.Role;
+  public readonly deploymentAssetsBucket: s3.Bucket;
   constructor(scope: Construct, id: string, props: ChibboBootstrapStackProps) {
     super(scope, id, props); tag(this, props.environmentName);
     const provider = iam.OpenIdConnectProvider.fromOpenIdConnectProviderArn(this, "GithubOidcProvider", props.githubOidcProviderArn);
+    this.deploymentAssetsBucket = new s3.Bucket(this, "DeploymentAssetsBucket", {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      versioned: true,
+      lifecycleRules: [{ noncurrentVersionExpiration: Duration.days(30) }],
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
     this.cloudFormationExecutionRole = new iam.Role(this, "CloudFormationExecutionRole", { roleName: `chibbo-${props.environmentName}-cloudformation-execution`, assumedBy: new iam.ServicePrincipal("cloudformation.amazonaws.com") });
     // This role is assumable only by CloudFormation and passed only by the
     // repository/environment-bound GitHub role below. It deliberately excludes
@@ -62,8 +71,11 @@ export class ChibboBootstrapStack extends Stack {
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["iam:PassRole"], resources: [this.cloudFormationExecutionRole.roleArn], conditions: { StringEquals: { "iam:PassedToService": "cloudformation.amazonaws.com" } } }));
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["ecr:GetAuthorizationToken"], resources: ["*"] }));
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["ecr:BatchCheckLayerAvailability", "ecr:CompleteLayerUpload", "ecr:DescribeImages", "ecr:InitiateLayerUpload", "ecr:PutImage", "ecr:UploadLayerPart"], resources: [this.formatArn({ service: "ecr", resource: "repository", resourceName: `chibbo-platform-${props.environmentName}` })] }));
+    this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["s3:GetBucketLocation", "s3:ListBucket"], resources: [this.deploymentAssetsBucket.bucketArn] }));
+    this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["s3:GetObject", "s3:PutObject"], resources: [this.deploymentAssetsBucket.arnForObjects("cloudformation/*")] }));
     new CfnOutput(this, "GithubDeployRoleArn", { value: this.githubDeployRole.roleArn });
     new CfnOutput(this, "CloudFormationExecutionRoleArn", { value: this.cloudFormationExecutionRole.roleArn });
+    new CfnOutput(this, "DeploymentAssetsBucketName", { value: this.deploymentAssetsBucket.bucketName });
   }
 }
 
