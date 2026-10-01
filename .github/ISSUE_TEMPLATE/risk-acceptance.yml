@@ -1,0 +1,29 @@
+name: Risk acceptance
+description: Record a time-bounded exception approved by the accountable owner.
+title: "[Risk acceptance] "
+labels: [risk-acceptance]
+body:
+  - type: markdown
+    attributes:
+      value: "위험수용은 통제를 없애는 결정이 아닙니다. 만료일과 보완 계획이 없는 요청은 승인할 수 없습니다."
+  - type: textarea
+    id: risk
+    attributes:
+      label: 수용하려는 위험과 근거
+      description: 영향을 받는 자산·통제, 발생 가능성, 영향도를 적습니다.
+    validations:
+      required: true
+  - type: textarea
+    id: safeguards
+    attributes:
+      label: 임시 보완책과 만료일
+      description: 적용 중인 완화 조치와 예외 만료일을 적습니다.
+    validations:
+      required: true
+  - type: textarea
+    id: owner
+    attributes:
+      label: 책임자와 최종 승인자
+      description: 조치 담당자와 최종 위험수용 승인자를 적습니다.
+    validations:
+      required: true

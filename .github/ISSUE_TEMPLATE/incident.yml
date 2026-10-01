@@ -1,0 +1,29 @@
+name: Incident
+description: Record a security, availability, or privacy incident.
+title: "[Incident] "
+labels: [incident]
+body:
+  - type: markdown
+    attributes:
+      value: "개인정보나 비밀값은 Issue 본문에 붙이지 말고, 식별 가능한 최소 정보와 대응 기록만 남깁니다."
+  - type: textarea
+    id: detection
+    attributes:
+      label: 발견 시각과 탐지 경로
+      description: UTC 또는 KST 기준 시각, 모니터링·사용자 신고·감사 로그 여부를 적습니다.
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: 영향 범위
+      description: 서비스, 고객사, 데이터 범주와 현재 알려진 영향을 적습니다.
+    validations:
+      required: true
+  - type: textarea
+    id: response
+    attributes:
+      label: 격리·복구·후속 조치
+      description: 조치 담당자, 증거 보존 위치, 재발 방지 작업을 적습니다.
+    validations:
+      required: true

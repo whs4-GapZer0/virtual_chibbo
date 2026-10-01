@@ -1,0 +1,29 @@
+name: Change
+description: Record a reviewed production, infrastructure, or security change.
+title: "[Change] "
+labels: [change]
+body:
+  - type: markdown
+    attributes:
+      value: "치뽀 채용지원 서비스의 변경은 배포 전 영향과 롤백 방법을 남깁니다."
+  - type: textarea
+    id: purpose
+    attributes:
+      label: 변경 목적과 범위
+      description: 대상 서비스·AWS 리소스·데이터 영향을 적습니다.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: 검토와 검증 계획
+      description: PR, 테스트, 승인자, 배포 후 확인 항목을 적습니다.
+    validations:
+      required: true
+  - type: textarea
+    id: rollback
+    attributes:
+      label: 롤백 방법
+      description: 실패 시 되돌릴 버전과 데이터 영향 여부를 적습니다.
+    validations:
+      required: true
