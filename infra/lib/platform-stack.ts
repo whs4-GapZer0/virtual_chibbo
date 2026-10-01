@@ -156,7 +156,10 @@ export class ChibboMigratorStack extends Stack {
     // ECS retrieves the private image and injects container secrets before the
     // task process starts, so these grants belong to the execution role.
     for (const secret of [runtimeSecret, props.foundation.databaseSecret, migratorDbSecret, appDbSecret]) secret.grantRead(executionRole);
-    this.taskDefinition = new ecs.FargateTaskDefinition(this, "MigrationTask", { cpu: 512, memoryLimitMiB: 1024, taskRole: role, executionRole });
+    this.taskDefinition = new ecs.FargateTaskDefinition(this, "MigrationTask", {
+      cpu: 512, memoryLimitMiB: 1024, taskRole: role, executionRole,
+      runtimePlatform: { cpuArchitecture: ecs.CpuArchitecture.ARM64, operatingSystemFamily: ecs.OperatingSystemFamily.LINUX }
+    });
     const container = this.taskDefinition.addContainer("Migrator", { image: imageFor(props.repository, props.imageDigest), logging: ecs.LogDrivers.awsLogs({ logGroup: props.foundation.appLogGroup, streamPrefix: "migrator" }), command: ["node", "apps/platform/scripts/migrate-db.mjs"] });
     container.addEnvironment("CHIBBO_DB_ADMIN_HOST", props.foundation.database.dbInstanceEndpointAddress);
     container.addEnvironment("CHIBBO_DB_ADMIN_PORT", props.foundation.database.dbInstanceEndpointPort);
@@ -185,7 +188,10 @@ export class ChibboApplicationStack extends Stack {
     taskRole.addToPolicy(new iam.PolicyStatement({ actions: ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"], resources: [props.foundation.resumeBucket.arnForObjects("quarantine/*"), props.foundation.resumeBucket.arnForObjects("accepted/*")] }));
     taskRole.addToPolicy(new iam.PolicyStatement({ actions: ["s3:ListBucket"], resources: [props.foundation.resumeBucket.bucketArn], conditions: { StringLike: { "s3:prefix": ["quarantine/*", "accepted/*"] } } }));
     props.foundation.resumeKey.grantEncryptDecrypt(taskRole);
-    const task = new ecs.FargateTaskDefinition(this, "Task", { cpu: 512, memoryLimitMiB: 1024, taskRole, executionRole });
+    const task = new ecs.FargateTaskDefinition(this, "Task", {
+      cpu: 512, memoryLimitMiB: 1024, taskRole, executionRole,
+      runtimePlatform: { cpuArchitecture: ecs.CpuArchitecture.ARM64, operatingSystemFamily: ecs.OperatingSystemFamily.LINUX }
+    });
     const container = task.addContainer("Platform", { image: imageFor(props.repository, props.imageDigest), logging: ecs.LogDrivers.awsLogs({ logGroup: props.foundation.appLogGroup, streamPrefix: "platform" }), portMappings: [{ containerPort: 3000 }], environment: { NODE_ENV: "production", NEXT_PUBLIC_APP_ORIGIN: props.appOrigin, CHIBBO_STORAGE_MODE: "s3", CHIBBO_RESUME_BUCKET: props.foundation.resumeBucket.bucketName, CHIBBO_RESUME_KMS_KEY_ID: props.foundation.resumeKey.keyArn, ENTRA_TENANT_ID: props.entraTenantId, ENTRA_CLIENT_ID: props.entraClientId, ENTRA_ISSUER: props.entraIssuer }, secrets: { CHIBBO_DELETION_PEPPER: ecs.Secret.fromSecretsManager(runtimeSecret, "CHIBBO_DELETION_PEPPER"), ENTRA_CLIENT_SECRET: ecs.Secret.fromSecretsManager(entraSecret, "ENTRA_CLIENT_SECRET") } });
     addDatabaseEnvironment(container, props.foundation, appDbSecret);
     const service = new ecs.FargateService(this, "Service", { cluster: props.foundation.cluster, taskDefinition: task, desiredCount: 1, minHealthyPercent: 100, maxHealthyPercent: 200, assignPublicIp: false, securityGroups: [props.foundation.appSecurityGroup], vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS } });

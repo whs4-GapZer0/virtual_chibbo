@@ -47,6 +47,7 @@ describe("Chibbo staged infrastructure", () => {
     expect(json).toContain("CHIBBO_APP_DB_PASSWORD");
     expect(json).toContain("AmazonECSTaskExecutionRolePolicy");
     expect(json).toContain("secretsmanager:GetSecretValue");
+    expect(json).toContain("ARM64");
     expect(json).not.toContain("AWS::ECS::Service");
   });
 
@@ -60,6 +61,7 @@ describe("Chibbo staged infrastructure", () => {
     expect(json).toContain("CHIBBO_DELETION_PEPPER");
     expect(json).toContain("ENTRA_CLIENT_SECRET");
     expect(json).toContain("secretsmanager:GetSecretValue");
+    expect(json).toContain("ARM64");
     expect(json).toContain("quarantine/*");
     expect(json).toContain("accepted/*");
   });
