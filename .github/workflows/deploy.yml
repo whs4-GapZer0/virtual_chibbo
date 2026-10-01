@@ -1,0 +1,118 @@
+name: deploy-dev
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_role_arn:
+        description: Bootstrap stack GithubDeployRoleArn output
+        required: true
+        type: string
+      cloudformation_execution_role_arn:
+        description: Bootstrap stack CloudFormationExecutionRoleArn output
+        required: true
+        type: string
+      app_origin:
+        description: Verified HTTPS application origin
+        required: true
+        type: string
+      certificate_arn:
+        description: Issued ACM certificate ARN in ap-northeast-2
+        required: true
+        type: string
+      entra_client_secret_name:
+        description: Existing Entra client-secret secret name
+        required: true
+        type: string
+      entra_tenant_id:
+        description: Entra tenant ID
+        required: true
+        type: string
+      entra_client_id:
+        description: Entra application client ID
+        required: true
+        type: string
+      entra_issuer:
+        description: Entra OIDC issuer URL
+        required: true
+        type: string
+      monthly_budget_usd:
+        description: Approved Chibbo monthly AWS Budget amount
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: chibbo-dev-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    environment: chibbo-dev
+    runs-on: ubuntu-24.04
+    env:
+      AWS_REGION: ap-northeast-2
+      APP_ORIGIN: ${{ inputs.app_origin }}
+      CERTIFICATE_ARN: ${{ inputs.certificate_arn }}
+      RUNTIME_CONFIG_SECRET_NAME: chibbo/dev/runtime
+      CHIBBO_MIGRATOR_DB_SECRET_NAME: chibbo/dev/db-migrator
+      CHIBBO_APP_DB_SECRET_NAME: chibbo/dev/db-app
+      ENTRA_CLIENT_SECRET_NAME: ${{ inputs.entra_client_secret_name }}
+      ENTRA_TENANT_ID: ${{ inputs.entra_tenant_id }}
+      ENTRA_CLIENT_ID: ${{ inputs.entra_client_id }}
+      ENTRA_ISSUER: ${{ inputs.entra_issuer }}
+      CHIBBO_MONTHLY_BUDGET_USD: ${{ inputs.monthly_budget_usd }}
+      CHIBBO_CFN_EXECUTION_ROLE_ARN: ${{ inputs.cloudformation_execution_role_arn }}
+      CHIBBO_EXPAND_MIGRATION_APPROVAL_ID: ${{ vars.CHIBBO_EXPAND_MIGRATION_APPROVAL_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.4.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Assume the Bootstrap-provisioned Chibbo-only GitHub role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.deploy_role_arn }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Deploy registry and foundation without CDK bootstrap assets
+        run: >-
+          pnpm --dir infra exec cdk deploy ChibboRegistryDev ChibboFoundationDev --require-approval never
+          --role-arn "$CHIBBO_CFN_EXECUTION_ROLE_ARN" -c appOrigin="$APP_ORIGIN"
+      - name: Enforce release prerequisites after foundation creates Chibbo secrets
+        run: node scripts/deployment-gate.mjs
+      - name: Build, scan, and push immutable platform image
+        id: image
+        run: |
+          repository_uri="$(aws cloudformation describe-stacks --stack-name ChibboRegistryDev --query 'Stacks[0].Outputs[?OutputKey==`PlatformRepositoryUri`].OutputValue' --output text)"
+          aws ecr get-login-password | docker login --username AWS --password-stdin "${repository_uri%/*}"
+          docker build --pull --tag "${repository_uri}:${GITHUB_SHA}" .
+          docker push "${repository_uri}:${GITHUB_SHA}"
+          digest="$(aws ecr describe-images --repository-name chibbo-platform-dev --image-ids imageTag="${GITHUB_SHA}" --query 'imageDetails[0].imageDigest' --output text)"
+          test -n "$digest" && test "$digest" != "None"
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+      - name: Deploy digest-pinned migration task definition
+        run: >-
+          pnpm --dir infra exec cdk deploy ChibboMigratorDev --require-approval never --role-arn "$CHIBBO_CFN_EXECUTION_ROLE_ARN"
+          -c releaseMigrator=true -c imageDigest="${{ steps.image.outputs.digest }}"
+          -c runtimeConfigSecretName="$RUNTIME_CONFIG_SECRET_NAME" -c migratorDbSecretName="$CHIBBO_MIGRATOR_DB_SECRET_NAME" -c appDbSecretName="$CHIBBO_APP_DB_SECRET_NAME"
+      - name: Run approved expand migration in its one-off task
+        run: bash ./scripts/run-expand-migration.sh
+      - name: Deploy digest-pinned application service
+        run: >-
+          pnpm --dir infra exec cdk deploy ChibboApplicationDev --require-approval never --role-arn "$CHIBBO_CFN_EXECUTION_ROLE_ARN"
+          -c releaseApplication=true -c imageDigest="${{ steps.image.outputs.digest }}"
+          -c runtimeConfigSecretName="$RUNTIME_CONFIG_SECRET_NAME" -c migratorDbSecretName="$CHIBBO_MIGRATOR_DB_SECRET_NAME" -c appDbSecretName="$CHIBBO_APP_DB_SECRET_NAME"
+          -c appOrigin="$APP_ORIGIN" -c certificateArn="$CERTIFICATE_ARN" -c entraClientSecretName="$ENTRA_CLIENT_SECRET_NAME"
+          -c entraTenantId="$ENTRA_TENANT_ID" -c entraClientId="$ENTRA_CLIENT_ID" -c entraIssuer="$ENTRA_ISSUER"
+      - name: Health and smoke check
+        run: bash ./scripts/smoke-deployment.sh
+      - name: Keep contract migration separately approved
+        run: echo "Contract migration intentionally excluded; it requires a later protected deployment after one rollback window."

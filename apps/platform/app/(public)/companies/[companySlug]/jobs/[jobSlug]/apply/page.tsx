@@ -1,0 +1,3 @@
+import { notFound } from "next/navigation"; import { findPublicJob } from "../../../../../../lib/jobs"; import { ApplyForm } from "./apply-form";
+export const dynamic = "force-dynamic";
+export default async function ApplyPage({ params }: { params: Promise<{ companySlug: string; jobSlug: string }> }) { const { companySlug, jobSlug } = await params; const job = await findPublicJob(companySlug, jobSlug); if (!job) notFound(); return <main><h1>{job.title} 지원</h1><p className="muted">이 화면은 합성 이력서로만 테스트하세요.</p><ApplyForm endpoint={`/api/public/jobs/${companySlug}/${jobSlug}/upload-intents`}/></main>; }

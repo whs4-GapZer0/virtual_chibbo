@@ -1,0 +1,15 @@
+{
+  "name": "virtual-chibbo",
+  "private": true,
+  "packageManager": "pnpm@10.4.1",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "pnpm --filter @chibbo/platform build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm --filter @chibbo/contracts test && pnpm --filter @chibbo/domain test && pnpm --filter @chibbo/storage test && pnpm --filter @chibbo/audit test && pnpm --filter @chibbo/auth test && pnpm --filter @chibbo/config test && pnpm --filter @chibbo/rate-limit test && pnpm --filter @chibbo/db test && pnpm --filter @chibbo/platform test && pnpm --filter @chibbo/infra test",
+    "test:security": "pnpm --filter @chibbo/testing test",
+    "infra:synth": "pnpm --dir infra synth"
+  },
+  "devDependencies": { "typescript": "5.7.3" }
+}

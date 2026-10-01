@@ -1,0 +1,33 @@
+# No email addresses, invitation links, passwords, or access keys belong in source control.
+# These workforce identities are distinct from GRC identities and use IAM Identity Center temporary sessions.
+# The `identityCenterInstanceArn`, target account ID, and five group IDs are preflight inputs, not source values.
+identityCenterInstanceArn: REQUIRED_AT_DEPLOY
+targetAccountId: REQUIRED_AT_DEPLOY
+resources:
+  # Copy exact Chibbo-only ARNs from CDK outputs. Wildcards and GRC resources are prohibited.
+  cloudFormationStackArn: REQUIRED_AT_DEPLOY
+  ecsServiceArn: REQUIRED_AT_DEPLOY
+  ecrRepositoryArn: REQUIRED_AT_DEPLOY
+  appLogGroupArn: REQUIRED_AT_DEPLOY
+  auditLogGroupArn: REQUIRED_AT_DEPLOY
+  auditBucketArn: REQUIRED_AT_DEPLOY
+  auditObjectPrefixArn: REQUIRED_AT_DEPLOY
+  auditKmsKeyArn: REQUIRED_AT_DEPLOY
+  dataTrailArn: REQUIRED_AT_DEPLOY
+  resourceExplorerViewArn: REQUIRED_AT_DEPLOY
+employees:
+  - name: 칠은서
+    username: chibbo-ceo
+    permissionSet: Chibbo-Approval
+  - name: 삼재윤
+    username: chibbo-cloud-engineer
+    permissionSet: Chibbo-Platform-Operator
+  - name: 두경금
+    username: chibbo-release-engineer
+    permissionSet: Chibbo-Release-Operator
+  - name: 정세일
+    username: chibbo-security-privacy
+    permissionSet: Chibbo-Security-Auditor
+  - name: 청석현
+    username: chibbo-ops-partner
+    permissionSet: Chibbo-Asset-Viewer

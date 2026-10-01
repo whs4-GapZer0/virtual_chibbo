@@ -1,0 +1,3 @@
+import Link from "next/link"; import { notFound } from "next/navigation"; import { findPublicJob } from "../../../../../lib/jobs";
+export const dynamic = "force-dynamic";
+export default async function JobPage({ params }: { params: Promise<{ companySlug: string; jobSlug: string }> }) { const { companySlug, jobSlug } = await params; const job = await findPublicJob(companySlug, jobSlug); if (!job) notFound(); return <main><Link href="/jobs">← 공고 목록</Link><article className="card"><p className="muted">{job.companyName} · {job.workType}</p><h1>{job.title}</h1><p>{job.description}</p><Link href={`/companies/${job.companySlug}/jobs/${job.slug}/apply`}>지원하기</Link></article></main>; }

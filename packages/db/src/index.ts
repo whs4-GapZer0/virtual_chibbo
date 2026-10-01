@@ -1,0 +1,9 @@
+import type { Pool, PoolClient } from "pg";
+export type TenantContext = { companyId: string; tenantId: string; objectId: string; role: "company-manager" | "platform-admin" };
+export async function withTenantTransaction<T>(pool: Pool, context: TenantContext, run: (client: PoolClient) => Promise<T>): Promise<T> {
+  if (!/^[0-9a-f-]{36}$/i.test(context.companyId)) throw new Error("invalid tenant context");
+  const client = await pool.connect();
+  try { await client.query("BEGIN"); await client.query("SELECT set_config('app.company_id', $1, true), set_config('app.actor_tenant_id', $2, true), set_config('app.actor_object_id', $3, true), set_config('app.actor_role', $4, true)", [context.companyId, context.tenantId, context.objectId, context.role]); const result = await run(client); await client.query("COMMIT"); return result; } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+}
+export async function withPublicTransaction<T>(pool: Pool, run: (client: PoolClient) => Promise<T>): Promise<T> { const client = await pool.connect(); try { await client.query("BEGIN"); const result = await run(client); await client.query("COMMIT"); return result; } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); } }
+export async function withActorTransaction<T>(pool: Pool, context: Omit<TenantContext, "companyId">, run: (client: PoolClient) => Promise<T>): Promise<T> { const client = await pool.connect(); try { await client.query("BEGIN"); await client.query("SELECT set_config('app.actor_tenant_id', $1, true), set_config('app.actor_object_id', $2, true), set_config('app.actor_role', $3, true)", [context.tenantId, context.objectId, context.role]); const result = await run(client); await client.query("COMMIT"); return result; } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); } }

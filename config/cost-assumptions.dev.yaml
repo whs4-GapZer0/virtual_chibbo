@@ -1,0 +1,24 @@
+accountId: REQUIRED_AT_DEPLOY
+region: ap-northeast-2
+availabilityZones: 2
+vpcCidr: 10.84.0.0/16
+ecs:
+  desiredTasks: 1
+  vcpu: 0.5
+  memoryGiB: 1
+  monthlyHours: 730
+rds:
+  instanceClass: db.t4g.micro
+  storageGiB: 20
+  backupDays: 7
+network:
+  natGateways: 1
+  estimatedNatGb: 5
+logging:
+  appRetentionDays: 30
+  auditRetentionDays: 90
+  flowRetentionDays: 30
+  trailRetentionDays: 365
+budget:
+  monthlyUsd: REQUIRED_AT_DEPLOY
+  notificationEmails: REQUIRED_AT_DEPLOY

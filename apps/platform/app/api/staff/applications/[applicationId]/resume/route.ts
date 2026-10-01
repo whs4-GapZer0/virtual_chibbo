@@ -1,0 +1,5 @@
+import { NextResponse } from "next/server";
+import { noStoreHeaders } from "@chibbo/auth";
+import { downloadStaffResume, resolveStaffSession } from "../../../../../lib/runtime";
+export const dynamic = "force-dynamic";
+export async function GET(request: Request, { params }: { params: Promise<{ applicationId: string }> }) { try { const token = request.headers.get("cookie")?.match(/(?:^|; )chibbo_session=([^;]+)/)?.[1]; const file = await downloadStaffResume(await resolveStaffSession(token && decodeURIComponent(token)), (await params).applicationId); if (!file.body || typeof file.body !== "object" || !("transformToWebStream" in file.body)) throw new Error("not found"); return new NextResponse((file.body as { transformToWebStream(): ReadableStream }).transformToWebStream(), { headers: { ...noStoreHeaders(), "Content-Type": file.mediaType, "Content-Disposition": 'attachment; filename="resume"', "X-Content-Type-Options": "nosniff" } }); } catch { return NextResponse.json({ error: "not found" }, { status: 404, headers: noStoreHeaders() }); } }

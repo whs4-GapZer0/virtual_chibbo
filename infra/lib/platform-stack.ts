@@ -1,0 +1,187 @@
+import * as acm from "aws-cdk-lib/aws-certificatemanager";
+import * as cloudtrail from "aws-cdk-lib/aws-cloudtrail";
+import * as ec2 from "aws-cdk-lib/aws-ec2";
+import * as ecr from "aws-cdk-lib/aws-ecr";
+import * as ecs from "aws-cdk-lib/aws-ecs";
+import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
+import * as iam from "aws-cdk-lib/aws-iam";
+import * as kms from "aws-cdk-lib/aws-kms";
+import * as logs from "aws-cdk-lib/aws-logs";
+import * as rds from "aws-cdk-lib/aws-rds";
+import * as s3 from "aws-cdk-lib/aws-s3";
+import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
+import { CfnOutput, Duration, RemovalPolicy, Stack, type StackProps, Tags } from "aws-cdk-lib";
+import { Construct } from "constructs";
+
+const TAGS = { Project: "virtual-chibbo", Owner: "ChibboCompany", DataClass: "synthetic", CostCenter: "Chibbo" } as const;
+const tag = (scope: Construct, environmentName: string): void => Object.entries({ ...TAGS, Environment: environmentName }).forEach(([key, value]) => Tags.of(scope).add(key, value));
+
+export interface ChibboBootstrapStackProps extends StackProps { environmentName: string; githubOidcProviderArn: string; githubOwnerId: string; githubRepositoryId: string; }
+/** Deploy once with a human operator's existing AWS credentials, before GitHub can deploy anything. */
+export class ChibboBootstrapStack extends Stack {
+  public readonly githubDeployRole: iam.Role;
+  public readonly cloudFormationExecutionRole: iam.Role;
+  constructor(scope: Construct, id: string, props: ChibboBootstrapStackProps) {
+    super(scope, id, props); tag(this, props.environmentName);
+    const provider = iam.OpenIdConnectProvider.fromOpenIdConnectProviderArn(this, "GithubOidcProvider", props.githubOidcProviderArn);
+    this.cloudFormationExecutionRole = new iam.Role(this, "CloudFormationExecutionRole", { roleName: `chibbo-${props.environmentName}-cloudformation-execution`, assumedBy: new iam.ServicePrincipal("cloudformation.amazonaws.com") });
+    // This role is assumable only by CloudFormation and passed only by the
+    // repository/environment-bound GitHub role below. It deliberately excludes
+    // account administration, billing, Organizations, Identity Center and all
+    // secret-read permissions; the services listed are the Chibbo CDK surface.
+    this.cloudFormationExecutionRole.addToPolicy(new iam.PolicyStatement({
+      sid: "ProvisionChibboInfrastructure",
+      actions: [
+        "acm:DescribeCertificate",
+        "cloudtrail:*",
+        "ec2:*",
+        "ecr:*",
+        "ecs:*",
+        "elasticloadbalancing:*",
+        "kms:CreateAlias", "kms:CreateKey", "kms:DescribeKey", "kms:DisableKey", "kms:EnableKeyRotation", "kms:GetKeyPolicy", "kms:ListResourceTags", "kms:PutKeyPolicy", "kms:ScheduleKeyDeletion", "kms:TagResource", "kms:UntagResource",
+        "logs:*",
+        "rds:*",
+        "s3:*",
+        "secretsmanager:CreateSecret", "secretsmanager:DeleteSecret", "secretsmanager:DescribeSecret", "secretsmanager:GetResourcePolicy", "secretsmanager:ListSecretVersionIds", "secretsmanager:PutResourcePolicy", "secretsmanager:RestoreSecret", "secretsmanager:RotateSecret", "secretsmanager:TagResource", "secretsmanager:UntagResource", "secretsmanager:UpdateSecret",
+        "iam:AttachRolePolicy", "iam:CreateRole", "iam:DeleteRole", "iam:DeleteRolePolicy", "iam:DetachRolePolicy", "iam:GetRole", "iam:GetRolePolicy", "iam:PassRole", "iam:PutRolePolicy", "iam:TagRole", "iam:UntagRole"
+      ],
+      resources: ["*"]
+    }));
+    this.githubDeployRole = new iam.Role(this, "GithubDeployRole", {
+      roleName: `chibbo-${props.environmentName}-github-deploy`,
+      assumedBy: new iam.FederatedPrincipal(provider.openIdConnectProviderArn, {
+        StringEquals: { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com", "token.actions.githubusercontent.com:repository_owner_id": props.githubOwnerId, "token.actions.githubusercontent.com:repository_id": props.githubRepositoryId },
+        StringLike: { "token.actions.githubusercontent.com:sub": `repo:whs4-GapZer0/virtual_chibbo:environment:chibbo-${props.environmentName}` }
+      }, "sts:AssumeRoleWithWebIdentity")
+    });
+    this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["cloudformation:CreateChangeSet", "cloudformation:DeleteChangeSet", "cloudformation:DescribeChangeSet", "cloudformation:DescribeStacks", "cloudformation:DescribeStackEvents", "cloudformation:ExecuteChangeSet"], resources: [this.formatArn({ service: "cloudformation", resource: "stack", resourceName: "Chibbo*/*" })] }));
+    this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["iam:PassRole"], resources: [this.cloudFormationExecutionRole.roleArn], conditions: { StringEquals: { "iam:PassedToService": "cloudformation.amazonaws.com" } } }));
+    this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["ecr:GetAuthorizationToken"], resources: ["*"] }));
+    this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["ecr:BatchCheckLayerAvailability", "ecr:CompleteLayerUpload", "ecr:DescribeImages", "ecr:InitiateLayerUpload", "ecr:PutImage", "ecr:UploadLayerPart"], resources: [this.formatArn({ service: "ecr", resource: "repository", resourceName: `chibbo-platform-${props.environmentName}` })] }));
+    new CfnOutput(this, "GithubDeployRoleArn", { value: this.githubDeployRole.roleArn });
+    new CfnOutput(this, "CloudFormationExecutionRoleArn", { value: this.cloudFormationExecutionRole.roleArn });
+  }
+}
+
+export interface ChibboRegistryStackProps extends StackProps { environmentName: string; }
+export class ChibboRegistryStack extends Stack {
+  public readonly repository: ecr.Repository;
+  constructor(scope: Construct, id: string, props: ChibboRegistryStackProps) {
+    super(scope, id, props); tag(this, props.environmentName);
+    this.repository = new ecr.Repository(this, "PlatformRepository", { repositoryName: `chibbo-platform-${props.environmentName}`, imageTagMutability: ecr.TagMutability.IMMUTABLE, imageScanOnPush: true, encryption: ecr.RepositoryEncryption.AES_256, lifecycleRules: [{ maxImageCount: 30 }], removalPolicy: RemovalPolicy.RETAIN });
+    new CfnOutput(this, "PlatformRepositoryUri", { value: this.repository.repositoryUri });
+  }
+}
+
+export interface ChibboFoundationStackProps extends StackProps { environmentName: string; appOrigin?: string; }
+export class ChibboFoundationStack extends Stack {
+  public readonly vpc: ec2.Vpc;
+  public readonly cluster: ecs.Cluster;
+  public readonly appSecurityGroup: ec2.SecurityGroup;
+  public readonly loadBalancerSecurityGroup: ec2.SecurityGroup;
+  public readonly database: rds.DatabaseInstance;
+  public readonly databaseSecret: secretsmanager.ISecret;
+  public readonly resumeBucket: s3.Bucket;
+  public readonly resumeKey: kms.Key;
+  public readonly appLogGroup: logs.LogGroup;
+  public readonly runtimeSecret: secretsmanager.Secret;
+  public readonly migratorDatabaseSecret: secretsmanager.Secret;
+  public readonly applicationDatabaseSecret: secretsmanager.Secret;
+  constructor(scope: Construct, id: string, props: ChibboFoundationStackProps) {
+    super(scope, id, props); tag(this, props.environmentName);
+    this.vpc = new ec2.Vpc(this, "Vpc", { ipAddresses: ec2.IpAddresses.cidr("10.84.0.0/16"), maxAzs: 2, natGateways: 1, subnetConfiguration: [{ name: "public", subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 }, { name: "app", subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, cidrMask: 24 }, { name: "db", subnetType: ec2.SubnetType.PRIVATE_ISOLATED, cidrMask: 24 }] });
+    this.vpc.addGatewayEndpoint("S3GatewayEndpoint", { service: ec2.GatewayVpcEndpointAwsService.S3 });
+    const auditKey = new kms.Key(this, "AuditKey", { enableKeyRotation: true, removalPolicy: RemovalPolicy.RETAIN, alias: `alias/chibbo/${props.environmentName}/audit` });
+    const auditBucket = new s3.Bucket(this, "AuditBucket", { blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL, encryption: s3.BucketEncryption.KMS, encryptionKey: auditKey, enforceSSL: true, versioned: true, removalPolicy: RemovalPolicy.RETAIN });
+    this.resumeKey = new kms.Key(this, "ResumeKey", { enableKeyRotation: true, removalPolicy: RemovalPolicy.RETAIN, alias: `alias/chibbo/${props.environmentName}/resume` });
+    this.resumeBucket = new s3.Bucket(this, "ResumeBucket", { blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL, objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_ENFORCED, encryption: s3.BucketEncryption.KMS, encryptionKey: this.resumeKey, enforceSSL: true, versioned: true, cors: props.appOrigin ? [{ allowedOrigins: [props.appOrigin], allowedMethods: [s3.HttpMethods.POST], allowedHeaders: ["content-type", "x-amz-*"], maxAge: 300 }] : undefined, lifecycleRules: [{ prefix: "quarantine/", expiration: Duration.days(7) }], removalPolicy: RemovalPolicy.RETAIN });
+    const flowLogGroup = new logs.LogGroup(this, "FlowLogs", { logGroupName: `/chibbo/${props.environmentName}/flow`, retention: logs.RetentionDays.ONE_MONTH, removalPolicy: RemovalPolicy.RETAIN });
+    new ec2.FlowLog(this, "VpcFlowLogs", { resourceType: ec2.FlowLogResourceType.fromVpc(this.vpc), destination: ec2.FlowLogDestination.toCloudWatchLogs(flowLogGroup) });
+    this.appLogGroup = new logs.LogGroup(this, "AppLogs", { logGroupName: `/chibbo/${props.environmentName}/app`, retention: logs.RetentionDays.ONE_MONTH, removalPolicy: RemovalPolicy.RETAIN });
+    const auditLogGroup = new logs.LogGroup(this, "AuditLogs", { logGroupName: `/chibbo/${props.environmentName}/audit`, retention: logs.RetentionDays.THREE_MONTHS, removalPolicy: RemovalPolicy.RETAIN });
+    const trail = new cloudtrail.Trail(this, "ResumeDataTrail", { bucket: auditBucket, includeGlobalServiceEvents: false, isMultiRegionTrail: false, managementEvents: cloudtrail.ReadWriteType.NONE, sendToCloudWatchLogs: true, cloudWatchLogGroup: auditLogGroup });
+    trail.addS3EventSelector([{ bucket: this.resumeBucket }], { readWriteType: cloudtrail.ReadWriteType.ALL });
+    const dbSg = new ec2.SecurityGroup(this, "DatabaseSecurityGroup", { vpc: this.vpc, allowAllOutbound: false });
+    this.appSecurityGroup = new ec2.SecurityGroup(this, "AppSecurityGroup", { vpc: this.vpc, allowAllOutbound: false });
+    this.loadBalancerSecurityGroup = new ec2.SecurityGroup(this, "LoadBalancerSecurityGroup", { vpc: this.vpc, allowAllOutbound: false });
+    dbSg.addIngressRule(this.appSecurityGroup, ec2.Port.tcp(5432), "ECS tasks to RDS");
+    this.appSecurityGroup.addEgressRule(dbSg, ec2.Port.tcp(5432), "RDS");
+    this.appSecurityGroup.addEgressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), "Entra and AWS APIs via NAT");
+    this.loadBalancerSecurityGroup.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), "HTTPS only");
+    this.loadBalancerSecurityGroup.addEgressRule(this.appSecurityGroup, ec2.Port.tcp(3000), "ALB to platform");
+    this.appSecurityGroup.addIngressRule(this.loadBalancerSecurityGroup, ec2.Port.tcp(3000), "ALB to platform");
+    this.database = new rds.DatabaseInstance(this, "Postgres", { vpc: this.vpc, vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED }, securityGroups: [dbSg], engine: rds.DatabaseInstanceEngine.postgres({ version: rds.PostgresEngineVersion.VER_16_4 }), databaseName: "chibbo", credentials: rds.Credentials.fromGeneratedSecret("chibbo_db_admin"), allocatedStorage: 20, maxAllocatedStorage: 100, backupRetention: Duration.days(7), deletionProtection: true, publiclyAccessible: false, removalPolicy: RemovalPolicy.SNAPSHOT });
+    this.databaseSecret = this.database.secret!;
+    this.runtimeSecret = new secretsmanager.Secret(this, "RuntimeConfig", { secretName: `chibbo/${props.environmentName}/runtime`, generateSecretString: { secretStringTemplate: "{}", generateStringKey: "CHIBBO_DELETION_PEPPER", passwordLength: 48, excludePunctuation: true }, removalPolicy: RemovalPolicy.RETAIN });
+    this.migratorDatabaseSecret = new secretsmanager.Secret(this, "MigratorDatabaseCredentials", { secretName: `chibbo/${props.environmentName}/db-migrator`, generateSecretString: { secretStringTemplate: JSON.stringify({ username: "chibbo_migrator" }), generateStringKey: "password", passwordLength: 40, excludePunctuation: true }, removalPolicy: RemovalPolicy.RETAIN });
+    this.applicationDatabaseSecret = new secretsmanager.Secret(this, "ApplicationDatabaseCredentials", { secretName: `chibbo/${props.environmentName}/db-app`, generateSecretString: { secretStringTemplate: JSON.stringify({ username: "chibbo_app" }), generateStringKey: "password", passwordLength: 40, excludePunctuation: true }, removalPolicy: RemovalPolicy.RETAIN });
+    this.cluster = new ecs.Cluster(this, "Cluster", { vpc: this.vpc, containerInsightsV2: ecs.ContainerInsights.ENABLED });
+    new CfnOutput(this, "DatabaseEndpoint", { value: this.database.dbInstanceEndpointAddress });
+    new CfnOutput(this, "ResumeBucketName", { value: this.resumeBucket.bucketName });
+    new CfnOutput(this, "ClusterName", { value: this.cluster.clusterName });
+    new CfnOutput(this, "AppSecurityGroupId", { value: this.appSecurityGroup.securityGroupId });
+    new CfnOutput(this, "AppSubnetIds", { value: this.vpc.privateSubnets.map((subnet) => subnet.subnetId).join(",") });
+    new CfnOutput(this, "RuntimeConfigSecretName", { value: this.runtimeSecret.secretName });
+    new CfnOutput(this, "MigratorDatabaseSecretName", { value: this.migratorDatabaseSecret.secretName });
+    new CfnOutput(this, "ApplicationDatabaseSecretName", { value: this.applicationDatabaseSecret.secretName });
+    new CfnOutput(this, "CloudTrailScope", { value: "resume S3 object data events only; management events excluded" });
+  }
+}
+
+interface ChibboRuntimeProps extends StackProps { environmentName: string; foundation: ChibboFoundationStack; repository: ecr.IRepository; imageDigest: string; runtimeConfigSecretName: string; entraClientSecretName?: string; entraTenantId?: string; entraClientId?: string; entraIssuer?: string; migratorDbSecretName: string; appDbSecretName: string; }
+const imageFor = (repository: ecr.IRepository, digest: string): ecs.ContainerImage => ecs.ContainerImage.fromRegistry(`${repository.repositoryUri}@${digest}`);
+const addDatabaseEnvironment = (container: ecs.ContainerDefinition, foundation: ChibboFoundationStack, secret: secretsmanager.ISecret): void => {
+  container.addEnvironment("PGHOST", foundation.database.dbInstanceEndpointAddress);
+  container.addEnvironment("PGPORT", foundation.database.dbInstanceEndpointPort);
+  container.addEnvironment("PGDATABASE", "chibbo");
+  container.addEnvironment("PGUSER", "chibbo_app");
+  container.addSecret("PGPASSWORD", ecs.Secret.fromSecretsManager(secret, "password"));
+};
+
+export class ChibboMigratorStack extends Stack {
+  public readonly taskDefinition: ecs.FargateTaskDefinition;
+  constructor(scope: Construct, id: string, props: ChibboRuntimeProps) {
+    super(scope, id, props); tag(this, props.environmentName);
+    const runtimeSecret = secretsmanager.Secret.fromSecretNameV2(this, "RuntimeConfig", props.runtimeConfigSecretName);
+    const migratorDbSecret = secretsmanager.Secret.fromSecretNameV2(this, "MigratorDbSecret", props.migratorDbSecretName);
+    const appDbSecret = secretsmanager.Secret.fromSecretNameV2(this, "AppDbSecret", props.appDbSecretName);
+    const role = new iam.Role(this, "MigrationTaskRole", { assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com") });
+    for (const secret of [runtimeSecret, props.foundation.databaseSecret, migratorDbSecret, appDbSecret]) secret.grantRead(role);
+    this.taskDefinition = new ecs.FargateTaskDefinition(this, "MigrationTask", { cpu: 512, memoryLimitMiB: 1024, taskRole: role });
+    const container = this.taskDefinition.addContainer("Migrator", { image: imageFor(props.repository, props.imageDigest), logging: ecs.LogDrivers.awsLogs({ logGroup: props.foundation.appLogGroup, streamPrefix: "migrator" }), command: ["node", "apps/platform/scripts/migrate-db.mjs"] });
+    container.addEnvironment("CHIBBO_DB_ADMIN_HOST", props.foundation.database.dbInstanceEndpointAddress);
+    container.addEnvironment("CHIBBO_DB_ADMIN_PORT", props.foundation.database.dbInstanceEndpointPort);
+    container.addEnvironment("CHIBBO_DATABASE_NAME", "chibbo");
+    container.addSecret("CHIBBO_DB_ADMIN_USER", ecs.Secret.fromSecretsManager(props.foundation.databaseSecret, "username"));
+    container.addSecret("CHIBBO_DB_ADMIN_PASSWORD", ecs.Secret.fromSecretsManager(props.foundation.databaseSecret, "password"));
+    container.addSecret("CHIBBO_MIGRATOR_DB_PASSWORD", ecs.Secret.fromSecretsManager(migratorDbSecret, "password"));
+    container.addSecret("CHIBBO_APP_DB_PASSWORD", ecs.Secret.fromSecretsManager(appDbSecret, "password"));
+    container.addSecret("CHIBBO_DELETION_PEPPER", ecs.Secret.fromSecretsManager(runtimeSecret, "CHIBBO_DELETION_PEPPER"));
+    new CfnOutput(this, "MigrationTaskDefinitionArn", { value: this.taskDefinition.taskDefinitionArn });
+  }
+}
+
+export class ChibboApplicationStack extends Stack {
+  constructor(scope: Construct, id: string, props: ChibboRuntimeProps & { appOrigin: string; certificateArn: string; entraClientSecretName: string; entraTenantId: string; entraClientId: string; entraIssuer: string }) {
+    super(scope, id, props); tag(this, props.environmentName);
+    const runtimeSecret = secretsmanager.Secret.fromSecretNameV2(this, "RuntimeConfig", props.runtimeConfigSecretName);
+    const appDbSecret = secretsmanager.Secret.fromSecretNameV2(this, "AppDbSecret", props.appDbSecretName);
+    const entraSecret = secretsmanager.Secret.fromSecretNameV2(this, "EntraClientSecret", props.entraClientSecretName);
+    const executionRole = new iam.Role(this, "TaskExecutionRole", { assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com") });
+    executionRole.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName("service-role/AmazonECSTaskExecutionRolePolicy"));
+    const taskRole = new iam.Role(this, "ApplicationTaskRole", { assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com") });
+    for (const secret of [runtimeSecret, appDbSecret, entraSecret]) secret.grantRead(taskRole);
+    taskRole.addToPolicy(new iam.PolicyStatement({ actions: ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"], resources: [props.foundation.resumeBucket.arnForObjects("quarantine/*"), props.foundation.resumeBucket.arnForObjects("accepted/*")] }));
+    taskRole.addToPolicy(new iam.PolicyStatement({ actions: ["s3:ListBucket"], resources: [props.foundation.resumeBucket.bucketArn], conditions: { StringLike: { "s3:prefix": ["quarantine/*", "accepted/*"] } } }));
+    props.foundation.resumeKey.grantEncryptDecrypt(taskRole);
+    const task = new ecs.FargateTaskDefinition(this, "Task", { cpu: 512, memoryLimitMiB: 1024, taskRole, executionRole });
+    const container = task.addContainer("Platform", { image: imageFor(props.repository, props.imageDigest), logging: ecs.LogDrivers.awsLogs({ logGroup: props.foundation.appLogGroup, streamPrefix: "platform" }), portMappings: [{ containerPort: 3000 }], environment: { NODE_ENV: "production", NEXT_PUBLIC_APP_ORIGIN: props.appOrigin, CHIBBO_STORAGE_MODE: "s3", CHIBBO_RESUME_BUCKET: props.foundation.resumeBucket.bucketName, CHIBBO_RESUME_KMS_KEY_ID: props.foundation.resumeKey.keyArn, ENTRA_TENANT_ID: props.entraTenantId, ENTRA_CLIENT_ID: props.entraClientId, ENTRA_ISSUER: props.entraIssuer }, secrets: { CHIBBO_DELETION_PEPPER: ecs.Secret.fromSecretsManager(runtimeSecret, "CHIBBO_DELETION_PEPPER"), ENTRA_CLIENT_SECRET: ecs.Secret.fromSecretsManager(entraSecret, "ENTRA_CLIENT_SECRET") } });
+    addDatabaseEnvironment(container, props.foundation, appDbSecret);
+    const service = new ecs.FargateService(this, "Service", { cluster: props.foundation.cluster, taskDefinition: task, desiredCount: 1, minHealthyPercent: 100, maxHealthyPercent: 200, assignPublicIp: false, securityGroups: [props.foundation.appSecurityGroup], vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS } });
+    const alb = new elbv2.ApplicationLoadBalancer(this, "Alb", { vpc: props.foundation.vpc, internetFacing: true, securityGroup: props.foundation.loadBalancerSecurityGroup });
+    const listener = alb.addListener("Https", { port: 443, open: false, protocol: elbv2.ApplicationProtocol.HTTPS, certificates: [acm.Certificate.fromCertificateArn(this, "Certificate", props.certificateArn)] });
+    listener.addTargets("Platform", { port: 3000, protocol: elbv2.ApplicationProtocol.HTTP, targets: [service], healthCheck: { path: "/api/health" } });
+    new CfnOutput(this, "ApplicationUrl", { value: props.appOrigin });
+    new CfnOutput(this, "LoadBalancerDnsName", { value: alb.loadBalancerDnsName });
+  }
+}
