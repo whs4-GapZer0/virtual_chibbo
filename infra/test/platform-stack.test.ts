@@ -48,6 +48,7 @@ describe("Chibbo staged infrastructure", () => {
     expect(json).toContain("exports/prowler/chibbo/");
     expect(json).toContain("--log-driver none");
     expect(json).toContain("ChibboProwlerReadOnlyRole");
+    expect(json).toContain("Environment=\\\"CHIBBO_PROWLER_RESOURCE_ARNS=");
   });
 
   it("makes a bootstrap-only GitHub role and CloudFormation execution role", () => {
