@@ -61,6 +61,14 @@ export class ChibboBootstrapStack extends Stack {
       ],
       resources: ["*"]
     }));
+    // The isolated scanner uses the public AL2023 SSM image parameter. This
+    // is an accountless AWS-owned parameter, not a Chibbo secret or arbitrary
+    // Parameter Store read permission.
+    this.cloudFormationExecutionRole.addToPolicy(new iam.PolicyStatement({
+      sid: "ResolveApprovedScannerAmi",
+      actions: ["ssm:GetParameters"],
+      resources: [`arn:${this.partition}:ssm:${this.region}::parameter/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64`],
+    }));
     // GitHub repositories created after 2026-07-15 use immutable OIDC
     // subject claims. AWS does not evaluate GitHub custom claims, so pin the
     // standard `sub` claim itself to this owner/repository ID pair and the
