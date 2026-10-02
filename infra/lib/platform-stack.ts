@@ -337,7 +337,7 @@ export class ChibboProwlerScannerStack extends Stack {
       `EVIDENCE_BUCKET=gapzero-evidence-${this.account}-${this.region}`,
       `TARGET_ROLE_ARN=${props.foundation.prowlerReadRole.roleArn}`,
       "TARGET_ROLE_EXTERNAL_ID=gapzero-chibbo-prowler-v1",
-      `CHIBBO_PROWLER_RESOURCE_ARNS=${props.foundation.resumeBucket.bucketArn} ${props.foundation.auditBucket.bucketArn}`,
+      `"CHIBBO_PROWLER_RESOURCE_ARNS=${props.foundation.resumeBucket.bucketArn} ${props.foundation.auditBucket.bucketArn}"`,
       "PROWLER_IMAGE=prowlercloud/prowler:5.44.0",
     ].map((entry) => `Environment=${entry}`).join("\n");
     userData.addCommands(
