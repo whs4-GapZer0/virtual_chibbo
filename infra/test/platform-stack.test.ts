@@ -63,6 +63,8 @@ describe("Chibbo staged infrastructure", () => {
     expect(json).toContain("iam:PassRole");
     expect(json).toContain("iam:CreateInstanceProfile");
     expect(json).toContain("iam:AddRoleToInstanceProfile");
+    expect(json).toContain("ssm:GetParameters");
+    expect(json).toContain("ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64");
     expect(json).toContain("ChibboFoundationTest-ConfigRecorderRole");
     expect(json).toContain("config.amazonaws.com");
     expect(json).toContain("secretsmanager:DescribeSecret");
