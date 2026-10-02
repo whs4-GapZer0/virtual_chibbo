@@ -1,0 +1,112 @@
+name: deploy-prowler-scanner
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_role_arn:
+        description: Bootstrap stack GithubDeployRoleArn output
+        required: true
+        type: string
+      cloudformation_execution_role_arn:
+        description: Bootstrap stack CloudFormationExecutionRoleArn output
+        required: true
+        type: string
+      app_origin:
+        description: Current verified HTTPS application origin (preserves application cross-stack exports)
+        required: true
+        type: string
+      certificate_arn:
+        description: Current issued ACM certificate ARN (preserves application cross-stack exports)
+        required: true
+        type: string
+      entra_tenant_id:
+        description: Current Chibbo Workforce tenant ID (preserves application cross-stack exports)
+        required: true
+        type: string
+      entra_client_id:
+        description: Current Chibbo Entra application client ID (preserves application cross-stack exports)
+        required: true
+        type: string
+      entra_issuer:
+        description: Current Chibbo Entra OIDC issuer (preserves application cross-stack exports)
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: chibbo-dev-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    environment: chibbo-dev
+    runs-on: ubuntu-24.04
+    env:
+      AWS_REGION: ap-northeast-2
+      APP_ORIGIN: ${{ inputs.app_origin }}
+      CERTIFICATE_ARN: ${{ inputs.certificate_arn }}
+      ENTRA_TENANT_ID: ${{ inputs.entra_tenant_id }}
+      ENTRA_CLIENT_ID: ${{ inputs.entra_client_id }}
+      ENTRA_ISSUER: ${{ inputs.entra_issuer }}
+      CHIBBO_CFN_EXECUTION_ROLE_ARN: ${{ inputs.cloudformation_execution_role_arn }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.4.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Assume the Bootstrap-provisioned Chibbo-only GitHub role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.deploy_role_arn }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Resolve the Chibbo-only CloudFormation template bucket
+        run: |
+          bucket="$(aws cloudformation describe-stacks --stack-name ChibboBootstrapDev --query 'Stacks[0].Outputs[?OutputKey==`DeploymentAssetsBucketName`].OutputValue' --output text)"
+          test -n "$bucket" && test "$bucket" != "None"
+          printf 'CHIBBO_DEPLOYMENT_ASSETS_BUCKET=%s\n' "$bucket" >> "$GITHUB_ENV"
+      - name: Synthesize the scanner while retaining existing application exports
+        run: |
+          template_dir="$(mktemp -d)"
+          # Foundation is already imported by the migrator and Application
+          # stacks. Construct their templates with placeholder image content
+          # before Foundation is updated so no in-use export is removed.
+          pnpm --dir infra exec cdk synth --output "$template_dir" \
+            -c appOrigin="$APP_ORIGIN" \
+            -c releaseMigrator=true \
+            -c releaseApplication=true \
+            -c imageDigest="sha256:0000000000000000000000000000000000000000000000000000000000000000" \
+            -c runtimeConfigSecretName="chibbo/dev/runtime" \
+            -c migratorDbSecretName="chibbo/dev/db-migrator" \
+            -c appDbSecretName="chibbo/dev/db-app" \
+            -c certificateArn="$CERTIFICATE_ARN" \
+            -c entraClientSecretName="chibbo/dev/entra" \
+            -c entraTenantId="$ENTRA_TENANT_ID" \
+            -c entraClientId="$ENTRA_CLIENT_ID" \
+            -c entraIssuer="$ENTRA_ISSUER"
+          printf 'CHIBBO_TEMPLATE_DIR=%s\n' "$template_dir" >> "$GITHUB_ENV"
+      - name: Update the bootstrap execution policy, target roles, and scanner
+        run: |
+          for stack in ChibboBootstrapDev ChibboFoundationDev ChibboProwlerScannerDev; do
+            aws cloudformation deploy \
+              --stack-name "$stack" \
+              --template-file "$CHIBBO_TEMPLATE_DIR/$stack.template.json" \
+              --s3-bucket "$CHIBBO_DEPLOYMENT_ASSETS_BUCKET" \
+              --s3-prefix cloudformation \
+              --capabilities CAPABILITY_NAMED_IAM \
+              --role-arn "$CHIBBO_CFN_EXECUTION_ROLE_ARN"
+          done
+      - name: Report isolated scanner handoff
+        run: |
+          instance_id="$(aws cloudformation describe-stacks --stack-name ChibboProwlerScannerDev --query 'Stacks[0].Outputs[?OutputKey==`ProwlerScannerInstanceId`].OutputValue' --output text)"
+          test -n "$instance_id" && test "$instance_id" != "None"
+          echo "Dedicated Scanner created: $instance_id"
+          echo "Source artifacts: s3://gapzero-evidence-992764023398-ap-northeast-2/exports/prowler/chibbo/"

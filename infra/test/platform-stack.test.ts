@@ -1,7 +1,7 @@
 import * as cdk from "aws-cdk-lib";
 import { Template } from "aws-cdk-lib/assertions";
 import { describe, expect, it } from "vitest";
-import { ChibboApplicationStack, ChibboBootstrapStack, ChibboFoundationStack, ChibboMigratorStack, ChibboRegistryStack } from "../lib/platform-stack.js";
+import { ChibboApplicationStack, ChibboBootstrapStack, ChibboFoundationStack, ChibboMigratorStack, ChibboProwlerScannerStack, ChibboRegistryStack } from "../lib/platform-stack.js";
 
 function foundations(): { app: cdk.App; foundation: ChibboFoundationStack; registry: ChibboRegistryStack } {
   const app = new cdk.App({ defaultStackSynthesizer: new cdk.LegacyStackSynthesizer() });
@@ -25,8 +25,29 @@ describe("Chibbo staged infrastructure", () => {
     expect(json).toContain("ConfigHistoryBucket");
     expect(json).toContain("ConfigRecorderRole");
     expect(json).toContain("GapZeroReadOnlyRole");
+    expect(json).toContain("ProwlerScannerRole");
+    expect(json).toContain("ChibboProwlerReadOnlyRole");
+    expect(json).toContain("s3:GetBucketPublicAccessBlock");
+    expect(json).toContain("s3:ListAllMyBuckets");
     expect(json).toContain("gapzero-ec2-runtime");
     expect(json).toContain("s3:GetEncryptionConfiguration");
+  });
+
+  it("separates scheduled Prowler collection from the application and exposes no ingress", () => {
+    const { app, foundation } = foundations();
+    const stack = new ChibboProwlerScannerStack(app, "ChibboProwlerScannerTest", { env: { account: "992764023398", region: "ap-northeast-2" }, environmentName: "test", foundation });
+    const template = Template.fromStack(stack);
+    template.resourceCountIs("AWS::EC2::Instance", 1);
+    template.resourceCountIs("AWS::EC2::SecurityGroupIngress", 0);
+    const json = JSON.stringify(template.toJSON());
+    expect(json).toContain("chibbo-test-prowler-scanner");
+    expect(json).toContain("HttpTokens");
+    expect(json).toContain("required");
+    expect(json).toContain("HttpPutResponseHopLimit");
+    expect(json).toContain("gapzero-evidence-992764023398-ap-northeast-2");
+    expect(json).toContain("exports/prowler/chibbo/");
+    expect(json).toContain("--log-driver none");
+    expect(json).toContain("ChibboProwlerReadOnlyRole");
   });
 
   it("makes a bootstrap-only GitHub role and CloudFormation execution role", () => {
@@ -40,6 +61,8 @@ describe("Chibbo staged infrastructure", () => {
     expect(json).toContain("cloudformation/*");
     expect(json).toContain("cloudformation:GetTemplateSummary");
     expect(json).toContain("iam:PassRole");
+    expect(json).toContain("iam:CreateInstanceProfile");
+    expect(json).toContain("iam:AddRoleToInstanceProfile");
     expect(json).toContain("ChibboFoundationTest-ConfigRecorderRole");
     expect(json).toContain("config.amazonaws.com");
     expect(json).toContain("secretsmanager:DescribeSecret");
