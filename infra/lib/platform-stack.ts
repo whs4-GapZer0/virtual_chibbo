@@ -12,10 +12,13 @@ import * as rds from "aws-cdk-lib/aws-rds";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import { CfnOutput, Duration, RemovalPolicy, Stack, type StackProps, Tags } from "aws-cdk-lib";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { Construct } from "constructs";
 
 const TAGS = { Project: "virtual-chibbo", Owner: "ChibboCompany", DataClass: "synthetic", CostCenter: "Chibbo" } as const;
 const tag = (scope: Construct, environmentName: string): void => Object.entries({ ...TAGS, Environment: environmentName }).forEach(([key, value]) => Tags.of(scope).add(key, value));
+const prowlerRunner = readFileSync(fileURLToPath(new URL("../scripts/run-prowler-chibbo-s3.sh", import.meta.url)), "utf8");
 
 export interface ChibboBootstrapStackProps extends StackProps { environmentName: string; githubOidcProviderArn: string; githubOwnerId: string; githubRepositoryId: string; }
 /** Deploy once with a human operator's existing AWS credentials, before GitHub can deploy anything. */
@@ -54,7 +57,7 @@ export class ChibboBootstrapStack extends Stack {
         "rds:*",
         "s3:*",
         "secretsmanager:CreateSecret", "secretsmanager:DeleteSecret", "secretsmanager:DescribeSecret", "secretsmanager:GetResourcePolicy", "secretsmanager:ListSecretVersionIds", "secretsmanager:PutResourcePolicy", "secretsmanager:RestoreSecret", "secretsmanager:RotateSecret", "secretsmanager:TagResource", "secretsmanager:UntagResource", "secretsmanager:UpdateSecret",
-        "iam:AttachRolePolicy", "iam:CreateRole", "iam:DeleteRole", "iam:DeleteRolePolicy", "iam:DetachRolePolicy", "iam:GetRole", "iam:GetRolePolicy", "iam:PassRole", "iam:PutRolePolicy", "iam:TagRole", "iam:UntagRole"
+        "iam:AddRoleToInstanceProfile", "iam:AttachRolePolicy", "iam:CreateInstanceProfile", "iam:CreateRole", "iam:DeleteInstanceProfile", "iam:DeleteRole", "iam:DeleteRolePolicy", "iam:DetachRolePolicy", "iam:GetInstanceProfile", "iam:GetRole", "iam:GetRolePolicy", "iam:PassRole", "iam:PutRolePolicy", "iam:RemoveRoleFromInstanceProfile", "iam:TagRole", "iam:UntagRole"
       ],
       resources: ["*"]
     }));
@@ -148,7 +151,10 @@ export class ChibboFoundationStack extends Stack {
   public readonly database: rds.DatabaseInstance;
   public readonly databaseSecret: secretsmanager.ISecret;
   public readonly resumeBucket: s3.Bucket;
+  public readonly auditBucket: s3.Bucket;
   public readonly resumeKey: kms.Key;
+  public readonly prowlerScannerRole: iam.Role;
+  public readonly prowlerReadRole: iam.Role;
   public readonly appLogGroup: logs.LogGroup;
   public readonly runtimeSecret: secretsmanager.Secret;
   public readonly migratorDatabaseSecret: secretsmanager.Secret;
@@ -160,14 +166,14 @@ export class ChibboFoundationStack extends Stack {
     this.vpc = new ec2.Vpc(this, "Vpc", { ipAddresses: ec2.IpAddresses.cidr("10.84.0.0/16"), availabilityZones: ["ap-northeast-2a", "ap-northeast-2c"], natGateways: 1, subnetConfiguration: [{ name: "public", subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 }, { name: "app", subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, cidrMask: 24 }, { name: "db", subnetType: ec2.SubnetType.PRIVATE_ISOLATED, cidrMask: 24 }] });
     this.vpc.addGatewayEndpoint("S3GatewayEndpoint", { service: ec2.GatewayVpcEndpointAwsService.S3 });
     const auditKey = new kms.Key(this, "AuditKey", { enableKeyRotation: true, removalPolicy: RemovalPolicy.RETAIN, alias: `alias/chibbo/${props.environmentName}/audit` });
-    const auditBucket = new s3.Bucket(this, "AuditBucket", { blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL, encryption: s3.BucketEncryption.KMS, encryptionKey: auditKey, enforceSSL: true, versioned: true, removalPolicy: RemovalPolicy.RETAIN });
+    this.auditBucket = new s3.Bucket(this, "AuditBucket", { blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL, encryption: s3.BucketEncryption.KMS, encryptionKey: auditKey, enforceSSL: true, versioned: true, removalPolicy: RemovalPolicy.RETAIN });
     this.resumeKey = new kms.Key(this, "ResumeKey", { enableKeyRotation: true, removalPolicy: RemovalPolicy.RETAIN, alias: `alias/chibbo/${props.environmentName}/resume` });
     this.resumeBucket = new s3.Bucket(this, "ResumeBucket", { blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL, objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_ENFORCED, encryption: s3.BucketEncryption.KMS, encryptionKey: this.resumeKey, enforceSSL: true, versioned: true, cors: props.appOrigin ? [{ allowedOrigins: [props.appOrigin], allowedMethods: [s3.HttpMethods.POST], allowedHeaders: ["content-type", "x-amz-*"], maxAge: 300 }] : undefined, lifecycleRules: [{ prefix: "quarantine/", expiration: Duration.days(7) }], removalPolicy: RemovalPolicy.RETAIN });
     const flowLogGroup = new logs.LogGroup(this, "FlowLogs", { logGroupName: `/chibbo/${props.environmentName}/flow`, retention: logs.RetentionDays.ONE_MONTH, removalPolicy: RemovalPolicy.RETAIN });
     new ec2.FlowLog(this, "VpcFlowLogs", { resourceType: ec2.FlowLogResourceType.fromVpc(this.vpc), destination: ec2.FlowLogDestination.toCloudWatchLogs(flowLogGroup) });
     this.appLogGroup = new logs.LogGroup(this, "AppLogs", { logGroupName: `/chibbo/${props.environmentName}/app`, retention: logs.RetentionDays.ONE_MONTH, removalPolicy: RemovalPolicy.RETAIN });
     const auditLogGroup = new logs.LogGroup(this, "AuditLogs", { logGroupName: `/chibbo/${props.environmentName}/audit`, retention: logs.RetentionDays.THREE_MONTHS, removalPolicy: RemovalPolicy.RETAIN });
-    const trail = new cloudtrail.Trail(this, "ResumeDataTrail", { bucket: auditBucket, includeGlobalServiceEvents: false, isMultiRegionTrail: false, managementEvents: cloudtrail.ReadWriteType.NONE, sendToCloudWatchLogs: true, cloudWatchLogGroup: auditLogGroup });
+    const trail = new cloudtrail.Trail(this, "ResumeDataTrail", { bucket: this.auditBucket, includeGlobalServiceEvents: false, isMultiRegionTrail: false, managementEvents: cloudtrail.ReadWriteType.NONE, sendToCloudWatchLogs: true, cloudWatchLogGroup: auditLogGroup });
     trail.addS3EventSelector([{ bucket: this.resumeBucket }], { readWriteType: cloudtrail.ReadWriteType.ALL });
     const configBucket = new s3.Bucket(this, "ConfigHistoryBucket", {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
@@ -219,6 +225,50 @@ export class ChibboFoundationStack extends Stack {
       ],
       resources: ["*"],
     }));
+    // The scheduled scanner is intentionally not a second GapZer0 web role.
+    // It may assume this separate target role solely for the two Chibbo S3
+    // buckets required by INF-C-01.  No application, database, GitHub or
+    // Entra secret is available to this instance.
+    this.prowlerScannerRole = new iam.Role(this, "ProwlerScannerRole", {
+      roleName: `chibbo-${props.environmentName}-prowler-scanner`,
+      assumedBy: new iam.ServicePrincipal("ec2.amazonaws.com"),
+      description: "Runs Chibbo's isolated scheduled Prowler source scan.",
+    });
+    this.prowlerScannerRole.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName("AmazonSSMManagedInstanceCore"));
+    this.prowlerScannerRole.addToPolicy(new iam.PolicyStatement({
+      sid: "AssumeOnlyChibboProwlerReadRole",
+      actions: ["sts:AssumeRole"],
+      resources: [`arn:${this.partition}:iam::${this.account}:role/ChibboProwlerReadOnlyRole`],
+    }));
+    this.prowlerScannerRole.addToPolicy(new iam.PolicyStatement({
+      sid: "WriteOnlyProwlerSourceArtifacts",
+      actions: ["s3:PutObject"],
+      resources: [`arn:${this.partition}:s3:::gapzero-evidence-${this.account}-${this.region}/exports/prowler/chibbo/*`],
+    }));
+    this.prowlerReadRole = new iam.Role(this, "ChibboProwlerReadOnlyRole", {
+      roleName: "ChibboProwlerReadOnlyRole",
+      assumedBy: new iam.ArnPrincipal(this.prowlerScannerRole.roleArn).withConditions({ StringEquals: { "sts:ExternalId": "gapzero-chibbo-prowler-v1" } }),
+      description: "Allows the Chibbo Scanner to inspect only the two S3 posture targets.",
+    });
+    this.prowlerReadRole.addToPolicy(new iam.PolicyStatement({
+      // Prowler's S3 provider first lists names to find the explicit
+      // resource-ARN filters. It receives no bucket configuration or object
+      // contents from that step; every subsequent configuration read remains
+      // constrained to Chibbo's two S3 targets below.
+      sid: "EnumerateBucketNamesForExplicitTargets",
+      actions: ["s3:ListAllMyBuckets"],
+      resources: ["*"],
+    }));
+    this.prowlerReadRole.addToPolicy(new iam.PolicyStatement({
+      sid: "ReadOnlySelectedS3Posture",
+      actions: [
+        "s3:GetBucketAcl", "s3:GetBucketLocation", "s3:GetBucketLogging", "s3:GetBucketNotification",
+        "s3:GetBucketOwnershipControls", "s3:GetBucketPolicy", "s3:GetBucketPolicyStatus", "s3:GetBucketPublicAccessBlock",
+        "s3:GetBucketTagging", "s3:GetBucketVersioning", "s3:GetEncryptionConfiguration", "s3:GetLifecycleConfiguration",
+        "s3:GetObjectLockConfiguration", "s3:GetReplicationConfiguration",
+      ],
+      resources: [this.resumeBucket.bucketArn, this.auditBucket.bucketArn],
+    }));
     const dbSg = new ec2.SecurityGroup(this, "DatabaseSecurityGroup", { vpc: this.vpc, allowAllOutbound: false });
     this.appSecurityGroup = new ec2.SecurityGroup(this, "AppSecurityGroup", { vpc: this.vpc, allowAllOutbound: false });
     this.loadBalancerSecurityGroup = new ec2.SecurityGroup(this, "LoadBalancerSecurityGroup", { vpc: this.vpc, allowAllOutbound: false });
@@ -250,6 +300,71 @@ export class ChibboFoundationStack extends Stack {
     new CfnOutput(this, "ConfigurationHistoryBucketName", { value: configBucket.bucketName });
     new CfnOutput(this, "ConfigurationRecorderRoleArn", { value: configRole.roleArn });
     new CfnOutput(this, "GapZeroReadOnlyRoleArn", { value: targetReadRole.roleArn });
+    new CfnOutput(this, "ProwlerScannerRoleArn", { value: this.prowlerScannerRole.roleArn });
+    new CfnOutput(this, "ChibboProwlerReadOnlyRoleArn", { value: this.prowlerReadRole.roleArn });
+  }
+}
+
+export interface ChibboProwlerScannerStackProps extends StackProps { environmentName: string; foundation: ChibboFoundationStack; }
+/**
+ * A deliberately separate compute plane for long-running posture collection.
+ * It has no inbound rules or public IPv4 address; it emits only source reports
+ * to the limited GapZer0 exports prefix and is managed through SSM.
+ */
+export class ChibboProwlerScannerStack extends Stack {
+  constructor(scope: Construct, id: string, props: ChibboProwlerScannerStackProps) {
+    super(scope, id, props); tag(this, props.environmentName);
+    const securityGroup = new ec2.SecurityGroup(this, "ProwlerScannerSecurityGroup", {
+      vpc: props.foundation.vpc,
+      allowAllOutbound: false,
+      description: "No ingress; HTTPS egress only for the isolated Prowler scanner.",
+    });
+    securityGroup.addEgressRule(ec2.Peer.ipv4("10.84.0.2/32"), ec2.Port.udp(53), "VPC DNS resolver");
+    securityGroup.addEgressRule(ec2.Peer.ipv4("10.84.0.2/32"), ec2.Port.tcp(53), "VPC DNS resolver");
+    securityGroup.addEgressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), "AWS APIs and image registry through the existing NAT");
+
+    const userData = ec2.UserData.forLinux();
+    const runnerEnvironment = [
+      `AWS_REGION=${this.region}`,
+      `EVIDENCE_BUCKET=gapzero-evidence-${this.account}-${this.region}`,
+      `TARGET_ROLE_ARN=${props.foundation.prowlerReadRole.roleArn}`,
+      "TARGET_ROLE_EXTERNAL_ID=gapzero-chibbo-prowler-v1",
+      `CHIBBO_PROWLER_RESOURCE_ARNS=${props.foundation.resumeBucket.bucketArn} ${props.foundation.auditBucket.bucketArn}`,
+      "PROWLER_IMAGE=prowlercloud/prowler:5.44.0",
+    ].map((entry) => `Environment=${entry}`).join("\n");
+    userData.addCommands(
+      "dnf install -y docker",
+      "systemctl enable --now docker",
+      "install -d -m 755 /usr/local/libexec",
+      "install -d -m 700 /var/lib/chibbo-prowler",
+      "cat > /usr/local/libexec/chibbo-run-prowler-s3 <<'CHIBBO_PROWLER_RUNNER'\n" + prowlerRunner + "\nCHIBBO_PROWLER_RUNNER",
+      "chmod 750 /usr/local/libexec/chibbo-run-prowler-s3",
+      "cat > /etc/systemd/system/chibbo-prowler-s3.service <<'CHIBBO_PROWLER_SERVICE'\n[Unit]\nDescription=Chibbo scheduled S3 Prowler source scan\nAfter=docker.service network-online.target\nWants=network-online.target\n\n[Service]\nType=oneshot\nTimeoutStartSec=45min\nStandardOutput=journal\nStandardError=journal\nSyslogIdentifier=chibbo-prowler-s3\n" + runnerEnvironment + "\nExecStart=/usr/local/libexec/chibbo-run-prowler-s3\nExecStartPost=/usr/bin/touch /var/lib/chibbo-prowler/.initial-run-complete\n\n[Install]\nWantedBy=multi-user.target\nCHIBBO_PROWLER_SERVICE",
+      "cat > /etc/systemd/system/chibbo-prowler-s3.timer <<'CHIBBO_PROWLER_TIMER'\n[Unit]\nDescription=Run the Chibbo S3 Prowler source scan daily\n\n[Timer]\n# 03:15 Asia/Seoul (UTC+9); explicit UTC avoids host timezone drift.\nOnCalendar=*-*-* 18:15:00 UTC\nPersistent=true\nRandomizedDelaySec=5m\nUnit=chibbo-prowler-s3.service\n\n[Install]\nWantedBy=timers.target\nCHIBBO_PROWLER_TIMER",
+      "chmod 644 /etc/systemd/system/chibbo-prowler-s3.service /etc/systemd/system/chibbo-prowler-s3.timer",
+      "systemctl daemon-reload",
+      "systemctl enable --now chibbo-prowler-s3.timer",
+      "if [ ! -e /var/lib/chibbo-prowler/.initial-run-complete ]; then systemctl start --no-block chibbo-prowler-s3.service; fi",
+    );
+    const instance = new ec2.Instance(this, "ProwlerScanner", {
+      vpc: props.foundation.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      role: props.foundation.prowlerScannerRole,
+      securityGroup,
+      instanceName: `chibbo-${props.environmentName}-prowler-scanner`,
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.SMALL),
+      machineImage: ec2.MachineImage.latestAmazonLinux2023(),
+      requireImdsv2: true,
+      blockDevices: [{ deviceName: "/dev/xvda", volume: ec2.BlockDeviceVolume.ebs(30, { encrypted: true, volumeType: ec2.EbsDeviceVolumeType.GP3, deleteOnTermination: true }) }],
+      userData,
+    });
+    // Docker containers require two hops to retrieve the instance's IMDSv2
+    // token.  IMDS itself remains mandatory and never exposes IMDSv1.
+    const cfnInstance = instance.node.defaultChild as ec2.CfnInstance;
+    cfnInstance.addPropertyOverride("MetadataOptions.HttpTokens", "required");
+    cfnInstance.addPropertyOverride("MetadataOptions.HttpPutResponseHopLimit", 2);
+    new CfnOutput(this, "ProwlerScannerInstanceId", { value: instance.instanceId });
+    new CfnOutput(this, "ProwlerSourceArtifactPrefix", { value: `s3://gapzero-evidence-${this.account}-${this.region}/exports/prowler/chibbo/` });
   }
 }
 

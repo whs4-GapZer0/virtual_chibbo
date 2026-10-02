@@ -1,6 +1,6 @@
 import "source-map-support/register.js";
 import * as cdk from "aws-cdk-lib";
-import { ChibboApplicationStack, ChibboBootstrapStack, ChibboFoundationStack, ChibboMigratorStack, ChibboRegistryStack } from "../lib/platform-stack.js";
+import { ChibboApplicationStack, ChibboBootstrapStack, ChibboFoundationStack, ChibboMigratorStack, ChibboProwlerScannerStack, ChibboRegistryStack } from "../lib/platform-stack.js";
 
 // CDK's CliCredentialsStackSynthesizer still requires the account-wide
 // hnb659fds bootstrap asset bucket.  This project deliberately does not use
@@ -18,6 +18,7 @@ new ChibboBootstrapStack(app, `ChibboBootstrap${capitalize(environmentName)}`, {
 });
 const registry = new ChibboRegistryStack(app, `ChibboRegistry${capitalize(environmentName)}`, { env, environmentName });
 const foundation = new ChibboFoundationStack(app, `ChibboFoundation${capitalize(environmentName)}`, { env, environmentName, appOrigin: app.node.tryGetContext("appOrigin") });
+new ChibboProwlerScannerStack(app, `ChibboProwlerScanner${capitalize(environmentName)}`, { env, environmentName, foundation });
 
 const releaseMigrator = app.node.tryGetContext("releaseMigrator") === "true";
 const releaseApplication = app.node.tryGetContext("releaseApplication") === "true";
