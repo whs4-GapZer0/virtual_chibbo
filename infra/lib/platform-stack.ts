@@ -19,11 +19,18 @@ import { Construct } from "constructs";
 
 const TAGS = { Project: "virtual-chibbo", Owner: "ChibboCompany", DataClass: "synthetic", CostCenter: "Chibbo" } as const;
 const tag = (scope: Construct, environmentName: string): void => Object.entries({ ...TAGS, Environment: environmentName }).forEach(([key, value]) => Tags.of(scope).add(key, value));
-const prowlerRunner = readFileSync(fileURLToPath(new URL("../scripts/run-prowler-chibbo-s3.sh", import.meta.url)), "utf8");
-// EC2 caps user data at 16 KiB.  The TVM runner is embedded gzip+base64 so
-// the scanner's three runners and their units stay below that limit.
-export const prowlerTvmRunnerGzipBase64 = gzipSync(readFileSync(fileURLToPath(new URL("../scripts/run-prowler-chibbo-tvm.sh", import.meta.url))), { level: 9 }).toString("base64");
-const trivyRunner = readFileSync(fileURLToPath(new URL("../scripts/run-trivy-chibbo-platform.sh", import.meta.url)), "utf8");
+// EC2 caps user data at 16 KiB.  Every scanner runner is embedded
+// gzip+base64 so the runners and their systemd units stay below that limit.
+const gzipBase64Script = (name: string): string => gzipSync(readFileSync(fileURLToPath(new URL(`../scripts/${name}`, import.meta.url))), { level: 9 }).toString("base64");
+export const prowlerS3RunnerGzipBase64 = gzipBase64Script("run-prowler-chibbo-s3.sh");
+export const prowlerControlRunnerGzipBase64 = gzipBase64Script("run-prowler-chibbo-control.sh");
+export const trivyRunnerGzipBase64 = gzipBase64Script("run-trivy-chibbo-platform.sh");
+// Prowler 5.44 check IDs run by the shared control runner.  GapZer0 reads
+// these exact IDs from exports/prowler/chibbo/ for each control.
+export const PROWLER_CONTROL_CHECKS = {
+  "tvm-c-01": ["ec2_instance_older_than_specific_days", "ec2_instance_with_outdated_ami", "rds_instance_no_public_access"],
+  "inf-e-01": ["elbv2_ssl_listeners", "elbv2_insecure_ssl_ciphers", "cloudfront_distributions_https_enabled"],
+} as const;
 
 export interface ChibboBootstrapStackProps extends StackProps { environmentName: string; githubOidcProviderArn: string; githubOwnerId: string; githubRepositoryId: string; }
 /** Deploy once with a human operator's existing AWS credentials, before GitHub can deploy anything. */
@@ -286,7 +293,7 @@ export class ChibboFoundationStack extends Stack {
     this.prowlerReadRole = new iam.Role(this, "ChibboProwlerReadOnlyRole", {
       roleName: "ChibboProwlerReadOnlyRole",
       assumedBy: new iam.ArnPrincipal(this.prowlerScannerRole.roleArn).withConditions({ StringEquals: { "sts:ExternalId": "gapzero-chibbo-prowler-v1" } }),
-      description: "Allows the Chibbo Scanner to inspect the two S3 posture targets and EC2/RDS inventory for TVM-C-01.",
+      description: "Allows the Chibbo Scanner to inspect the two S3 posture targets, EC2/RDS inventory for TVM-C-01 and ELBv2/CloudFront TLS for INF-E-01.",
     });
     this.prowlerReadRole.addToPolicy(new iam.PolicyStatement({
       // Prowler's S3 provider first lists names to find the explicit
@@ -314,6 +321,20 @@ export class ChibboFoundationStack extends Stack {
       // resource-level scoping, so "*" is required; there is no data access.
       sid: "ReadOnlyTvmEc2AndRdsInventory",
       actions: ["ec2:DescribeInstances", "ec2:DescribeImages", "rds:DescribeDBInstances"],
+      resources: ["*"],
+    }));
+    this.prowlerReadRole.addToPolicy(new iam.PolicyStatement({
+      // INF-E-01 Prowler checks (elbv2_ssl_listeners, elbv2_insecure_ssl_ciphers,
+      // cloudfront_distributions_https_enabled) read load balancer, listener
+      // and distribution configuration only.  These Describe/List APIs do not
+      // support resource-level scoping; none of them returns traffic or data.
+      sid: "ReadOnlyInfE01TlsConfiguration",
+      actions: [
+        "elasticloadbalancing:DescribeLoadBalancers", "elasticloadbalancing:DescribeListeners",
+        "elasticloadbalancing:DescribeLoadBalancerAttributes", "elasticloadbalancing:DescribeRules",
+        "elasticloadbalancing:DescribeTags", "elasticloadbalancing:DescribeSSLPolicies",
+        "cloudfront:ListDistributions", "cloudfront:GetDistributionConfig", "cloudfront:ListTagsForResource",
+      ],
       resources: ["*"],
     }));
     const dbSg = new ec2.SecurityGroup(this, "DatabaseSecurityGroup", { vpc: this.vpc, allowAllOutbound: false });
@@ -371,56 +392,64 @@ export class ChibboProwlerScannerStack extends Stack {
     securityGroup.addEgressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), "AWS APIs and image registry through the existing NAT");
 
     const userData = ec2.UserData.forLinux();
-    const runnerEnvironment = [
+    const environmentLines = (entries: string[]): string => entries.map((entry) => `Environment=${entry}`).join("\n");
+    const targetRoleEnvironment = [
       `AWS_REGION=${this.region}`,
       `EVIDENCE_BUCKET=gapzero-evidence-${this.account}-${this.region}`,
       `TARGET_ROLE_ARN=${props.foundation.prowlerReadRole.roleArn}`,
       "TARGET_ROLE_EXTERNAL_ID=gapzero-chibbo-prowler-v1",
+      "PROWLER_IMAGE=prowlercloud/prowler:5.44.0",
+    ];
+    const runnerEnvironment = environmentLines([
+      ...targetRoleEnvironment,
       `"CHIBBO_PROWLER_RESOURCE_ARNS=${props.foundation.resumeBucket.bucketArn} ${props.foundation.auditBucket.bucketArn}"`,
-      "PROWLER_IMAGE=prowlercloud/prowler:5.44.0",
-    ].map((entry) => `Environment=${entry}`).join("\n");
-    // The TVM runner has no resource filter: its target-role statement only
-    // permits EC2/AMI/RDS Describe calls.
-    const tvmRunnerEnvironment = [
-      `AWS_REGION=${this.region}`,
-      `EVIDENCE_BUCKET=gapzero-evidence-${this.account}-${this.region}`,
-      `TARGET_ROLE_ARN=${props.foundation.prowlerReadRole.roleArn}`,
-      "TARGET_ROLE_EXTERNAL_ID=gapzero-chibbo-prowler-v1",
-      "PROWLER_IMAGE=prowlercloud/prowler:5.44.0",
-    ].map((entry) => `Environment=${entry}`).join("\n");
-    const trivyRunnerEnvironment = [
+    ]);
+    const trivyRunnerEnvironment = environmentLines([
       `AWS_REGION=${this.region}`,
       `EVIDENCE_BUCKET=gapzero-evidence-${this.account}-${this.region}`,
       `CHIBBO_ENVIRONMENT=${props.environmentName}`,
       `CHIBBO_PLATFORM_IMAGE_URI=${this.account}.dkr.ecr.${this.region}.amazonaws.com/chibbo-platform-${props.environmentName}`,
       "TRIVY_IMAGE=public.ecr.aws/aquasecurity/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa",
-    ].map((entry) => `Environment=${entry}`).join("\n");
+    ]);
+    const installRunner = (name: string, gzipBase64: string): string[] => [
+      `base64 --decode <<'CHIBBO_RUNNER' | gzip --decompress > /usr/local/libexec/${name}\n${gzipBase64}\nCHIBBO_RUNNER`,
+      `chmod 750 /usr/local/libexec/${name}`,
+    ];
+    const unit = (path: string, body: string): string => `cat > /etc/systemd/system/${path} <<'CHIBBO_UNIT'\n${body}\nCHIBBO_UNIT`;
+    const service = (name: string, description: string, environment: string, execStart: string, marker: string): string =>
+      unit(`${name}.service`, `[Unit]\nDescription=${description}\nAfter=docker.service network-online.target\nWants=network-online.target\n\n[Service]\nType=oneshot\nTimeoutStartSec=45min\nStandardOutput=journal\nStandardError=journal\nSyslogIdentifier=${name}\n${environment}\nExecStart=${execStart}\nExecStartPost=/usr/bin/touch ${marker}\n\n[Install]\nWantedBy=multi-user.target`);
+    // OnCalendar is explicit UTC so the host timezone cannot shift a run.
+    // GapZer0 expires exports/ after one day, so every run stays daily.
+    const timer = (name: string, description: string, kstComment: string, utc: string): string =>
+      unit(`${name}.timer`, `[Unit]\nDescription=${description}\n\n[Timer]\n# ${kstComment}\nOnCalendar=*-*-* ${utc} UTC\nPersistent=true\nRandomizedDelaySec=5m\nUnit=${name}.service\n\n[Install]\nWantedBy=timers.target`);
+    // Controls whose checks need no resource filter share one runner; the
+    // target role grants only the Describe/List calls those checks need.
+    const controlRuns = [
+      { control: "tvm-c-01", name: "chibbo-prowler-tvm", label: "TVM-C-01 EC2/RDS", marker: ".initial-tvm-run-complete", kst: "03:45 Asia/Seoul, after the S3 and Trivy runs", utc: "18:45:00" },
+      { control: "inf-e-01", name: "chibbo-prowler-inf-e-01", label: "INF-E-01 ELBv2/CloudFront TLS", marker: ".initial-inf-e-01-run-complete", kst: "04:00 Asia/Seoul, after the TVM-C-01 run", utc: "19:00:00" },
+    ] as const;
+    const units = ["chibbo-prowler-s3.service", "chibbo-prowler-s3.timer", "chibbo-trivy-platform.service", "chibbo-trivy-platform.timer", ...controlRuns.flatMap((run) => [`${run.name}.service`, `${run.name}.timer`])];
     userData.addCommands(
       "dnf install -y docker",
       "systemctl enable --now docker",
       "install -d -m 755 /usr/local/libexec",
       "install -d -m 700 /var/lib/chibbo-prowler",
       "install -d -m 700 /var/lib/chibbo-trivy",
-      "cat > /usr/local/libexec/chibbo-run-prowler-s3 <<'CHIBBO_PROWLER_RUNNER'\n" + prowlerRunner + "\nCHIBBO_PROWLER_RUNNER",
-      "chmod 750 /usr/local/libexec/chibbo-run-prowler-s3",
-      "base64 --decode <<'CHIBBO_PROWLER_TVM_RUNNER' | gzip --decompress > /usr/local/libexec/chibbo-run-prowler-tvm\n" + prowlerTvmRunnerGzipBase64 + "\nCHIBBO_PROWLER_TVM_RUNNER",
-      "chmod 750 /usr/local/libexec/chibbo-run-prowler-tvm",
-      "cat > /usr/local/libexec/chibbo-run-trivy-platform <<'CHIBBO_TRIVY_RUNNER'\n" + trivyRunner + "\nCHIBBO_TRIVY_RUNNER",
-      "chmod 750 /usr/local/libexec/chibbo-run-trivy-platform",
-      "cat > /etc/systemd/system/chibbo-prowler-s3.service <<'CHIBBO_PROWLER_SERVICE'\n[Unit]\nDescription=Chibbo scheduled S3 Prowler source scan\nAfter=docker.service network-online.target\nWants=network-online.target\n\n[Service]\nType=oneshot\nTimeoutStartSec=45min\nStandardOutput=journal\nStandardError=journal\nSyslogIdentifier=chibbo-prowler-s3\n" + runnerEnvironment + "\nExecStart=/usr/local/libexec/chibbo-run-prowler-s3\nExecStartPost=/usr/bin/touch /var/lib/chibbo-prowler/.initial-run-complete\n\n[Install]\nWantedBy=multi-user.target\nCHIBBO_PROWLER_SERVICE",
-      "cat > /etc/systemd/system/chibbo-prowler-tvm.service <<'CHIBBO_PROWLER_TVM_SERVICE'\n[Unit]\nDescription=Chibbo scheduled TVM-C-01 EC2/RDS Prowler source scan\nAfter=docker.service network-online.target\nWants=network-online.target\n\n[Service]\nType=oneshot\nTimeoutStartSec=45min\nStandardOutput=journal\nStandardError=journal\nSyslogIdentifier=chibbo-prowler-tvm\n" + tvmRunnerEnvironment + "\nExecStart=/usr/local/libexec/chibbo-run-prowler-tvm\nExecStartPost=/usr/bin/touch /var/lib/chibbo-prowler/.initial-tvm-run-complete\n\n[Install]\nWantedBy=multi-user.target\nCHIBBO_PROWLER_TVM_SERVICE",
-      "cat > /etc/systemd/system/chibbo-trivy-platform.service <<'CHIBBO_TRIVY_SERVICE'\n[Unit]\nDescription=Chibbo scheduled platform-image Trivy source scan\nAfter=docker.service network-online.target\nWants=network-online.target\n\n[Service]\nType=oneshot\nTimeoutStartSec=45min\nStandardOutput=journal\nStandardError=journal\nSyslogIdentifier=chibbo-trivy-platform\n" + trivyRunnerEnvironment + "\nExecStart=/usr/local/libexec/chibbo-run-trivy-platform\nExecStartPost=/usr/bin/touch /var/lib/chibbo-trivy/.initial-run-complete\n\n[Install]\nWantedBy=multi-user.target\nCHIBBO_TRIVY_SERVICE",
-      "cat > /etc/systemd/system/chibbo-prowler-s3.timer <<'CHIBBO_PROWLER_TIMER'\n[Unit]\nDescription=Run the Chibbo S3 Prowler source scan daily\n\n[Timer]\n# 03:15 Asia/Seoul (UTC+9); explicit UTC avoids host timezone drift.\nOnCalendar=*-*-* 18:15:00 UTC\nPersistent=true\nRandomizedDelaySec=5m\nUnit=chibbo-prowler-s3.service\n\n[Install]\nWantedBy=timers.target\nCHIBBO_PROWLER_TIMER",
-      "cat > /etc/systemd/system/chibbo-prowler-tvm.timer <<'CHIBBO_PROWLER_TVM_TIMER'\n[Unit]\nDescription=Run the Chibbo TVM-C-01 Prowler source scan daily\n\n[Timer]\n# 03:45 Asia/Seoul (UTC+9), after the S3 and Trivy runs. GapZer0 expires\n# exports/ after one day, so this run must stay daily.\nOnCalendar=*-*-* 18:45:00 UTC\nPersistent=true\nRandomizedDelaySec=5m\nUnit=chibbo-prowler-tvm.service\n\n[Install]\nWantedBy=timers.target\nCHIBBO_PROWLER_TVM_TIMER",
-      "cat > /etc/systemd/system/chibbo-trivy-platform.timer <<'CHIBBO_TRIVY_TIMER'\n[Unit]\nDescription=Run the Chibbo platform-image Trivy source scan daily\n\n[Timer]\n# 03:30 Asia/Seoul (UTC+9); explicit UTC avoids host timezone drift.\nOnCalendar=*-*-* 18:30:00 UTC\nPersistent=true\nRandomizedDelaySec=5m\nUnit=chibbo-trivy-platform.service\n\n[Install]\nWantedBy=timers.target\nCHIBBO_TRIVY_TIMER",
-      "chmod 644 /etc/systemd/system/chibbo-prowler-s3.service /etc/systemd/system/chibbo-prowler-s3.timer /etc/systemd/system/chibbo-prowler-tvm.service /etc/systemd/system/chibbo-prowler-tvm.timer/etc/systemd/system/chibbo-trivy-platform.service /etc/systemd/system/chibbo-trivy-platform.timer",
+      ...installRunner("chibbo-run-prowler-s3", prowlerS3RunnerGzipBase64),
+      ...installRunner("chibbo-run-prowler-control", prowlerControlRunnerGzipBase64),
+      ...installRunner("chibbo-run-trivy-platform", trivyRunnerGzipBase64),
+      service("chibbo-prowler-s3", "Chibbo scheduled S3 Prowler source scan", runnerEnvironment, "/usr/local/libexec/chibbo-run-prowler-s3", "/var/lib/chibbo-prowler/.initial-run-complete"),
+      service("chibbo-trivy-platform", "Chibbo scheduled platform-image Trivy source scan", trivyRunnerEnvironment, "/usr/local/libexec/chibbo-run-trivy-platform", "/var/lib/chibbo-trivy/.initial-run-complete"),
+      ...controlRuns.map((run) => service(run.name, `Chibbo scheduled ${run.label} Prowler source scan`, environmentLines([...targetRoleEnvironment, `CHIBBO_PROWLER_CONTROL=${run.control}`, `"CHIBBO_PROWLER_CHECKS=${PROWLER_CONTROL_CHECKS[run.control].join(" ")}"`]), "/usr/local/libexec/chibbo-run-prowler-control", `/var/lib/chibbo-prowler/${run.marker}`)),
+      timer("chibbo-prowler-s3", "Run the Chibbo S3 Prowler source scan daily", "03:15 Asia/Seoul", "18:15:00"),
+      timer("chibbo-trivy-platform", "Run the Chibbo platform-image Trivy source scan daily", "03:30 Asia/Seoul", "18:30:00"),
+      ...controlRuns.map((run) => timer(run.name, `Run the Chibbo ${run.label} Prowler source scan daily`, run.kst, run.utc)),
+      `chmod 644 ${units.map((name) => `/etc/systemd/system/${name}`).join(" ")}`,
       "systemctl daemon-reload",
-      "systemctl enable --now chibbo-prowler-s3.timer",
-      "systemctl enable --now chibbo-prowler-tvm.timer",
-      "systemctl enable --now chibbo-trivy-platform.timer",
+      ...["chibbo-prowler-s3", "chibbo-trivy-platform", ...controlRuns.map((run) => run.name)].map((name) => `systemctl enable --now ${name}.timer`),
       "if [ ! -e /var/lib/chibbo-prowler/.initial-run-complete ]; then systemctl start --no-block chibbo-prowler-s3.service; fi",
       "if [ ! -e /var/lib/chibbo-trivy/.initial-run-complete ]; then systemctl start --no-block chibbo-trivy-platform.service; fi",
-      "if [ ! -e /var/lib/chibbo-prowler/.initial-tvm-run-complete ]; then systemctl start --no-block chibbo-prowler-tvm.service; fi",
+      ...controlRuns.map((run) => `if [ ! -e /var/lib/chibbo-prowler/${run.marker} ]; then systemctl start --no-block ${run.name}.service; fi`),
     );
     const instance = new ec2.Instance(this, "ProwlerScanner", {
       vpc: props.foundation.vpc,
@@ -433,6 +462,10 @@ export class ChibboProwlerScannerStack extends Stack {
       requireImdsv2: true,
       blockDevices: [{ deviceName: "/dev/xvda", volume: ec2.BlockDeviceVolume.ebs(30, { encrypted: true, volumeType: ec2.EbsDeviceVolumeType.GP3, deleteOnTermination: true }) }],
       userData,
+      // User data runs only on an instance's first boot, so an in-place
+      // update would restart the scanner without installing a changed runner.
+      // The scanner keeps no state (reports go to S3), so replace it instead.
+      userDataCausesReplacement: true,
     });
     // Docker containers require two hops to retrieve the instance's IMDSv2
     // token.  IMDS itself remains mandatory and never exposes IMDSv1.
