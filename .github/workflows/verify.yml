@@ -53,6 +53,8 @@ jobs:
       - name: Bind evidence reports to the commit
         id: manifest
         if: always()
+        env:
+          EVIDENCE_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           node <<'NODE'
           const { createHash } = require("node:crypto");
@@ -71,7 +73,7 @@ jobs:
           }));
           writeFileSync(`${root}app-e-01-manifest.json`, `${JSON.stringify({
             schema: "gapzero.app-e-01/v1",
-            commit_sha: process.env.GITHUB_SHA,
+            commit_sha: process.env.EVIDENCE_COMMIT_SHA,
             workflow_run_id: process.env.GITHUB_RUN_ID,
             repository: process.env.GITHUB_REPOSITORY,
             tools: {
