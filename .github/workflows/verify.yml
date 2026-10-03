@@ -28,3 +28,74 @@ jobs:
       - run: pnpm test
       - run: pnpm build
       - run: pnpm --dir infra synth
+      - name: Prepare APP-E-01 evidence directory
+        run: mkdir --parents app-e-01-evidence
+      - name: Scan the checked-out commit with Trivy
+        id: trivy
+        continue-on-error: true
+        run: |
+          docker run --rm --volume "$PWD:/src" --workdir /src aquasec/trivy:0.68.2@sha256:05d0126976bdedcd0782a0336f77832dbea1c81b9cc5e4b3a5ea5d2ec863aca7 \
+            fs --scanners vuln,misconfig,secret --severity CRITICAL --exit-code 1 \
+            --format json --output /src/app-e-01-evidence/trivy.json /src
+      - name: Scan the checked-out commit with Semgrep
+        id: semgrep
+        continue-on-error: true
+        run: |
+          docker run --rm --volume "$PWD:/src" --workdir /src semgrep/semgrep:1.145.0@sha256:b68f9b68483955b85042dac7b4533757779625a02dcf91e470da4c2df1b430be \
+            semgrep scan --config p/default --error --json \
+            --output /src/app-e-01-evidence/semgrep.json .
+      - name: Generate an SPDX SBOM for the checked-out commit
+        id: sbom
+        continue-on-error: true
+        run: |
+          docker run --rm --volume "$PWD:/src" anchore/syft:v1.37.0@sha256:48d679480c6d272c1801cf30460556959c01d4826795be31d4fd8b53750b7d91 \
+            dir:/src -o spdx-json=/src/app-e-01-evidence/sbom.spdx.json
+      - name: Bind evidence reports to the commit
+        id: manifest
+        if: always()
+        env:
+          EVIDENCE_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          node <<'NODE'
+          const { createHash } = require("node:crypto");
+          const { readFileSync, writeFileSync } = require("node:fs");
+
+          const root = "app-e-01-evidence/";
+          const files = {
+            trivy: "trivy.json",
+            semgrep: "semgrep.json",
+            sbom: "sbom.spdx.json",
+          };
+          const reports = Object.fromEntries(Object.entries(files).map(([kind, path]) => {
+            const body = readFileSync(`${root}${path}`);
+            if (body.length === 0) throw new Error(`${kind} report is empty`);
+            return [kind, { path, sha256: createHash("sha256").update(body).digest("hex") }];
+          }));
+          writeFileSync(`${root}app-e-01-manifest.json`, `${JSON.stringify({
+            schema: "gapzero.app-e-01/v1",
+            commit_sha: process.env.EVIDENCE_COMMIT_SHA,
+            workflow_run_id: process.env.GITHUB_RUN_ID,
+            repository: process.env.GITHUB_REPOSITORY,
+            tools: {
+              trivy: "aquasec/trivy:0.68.2@sha256:05d0126976bdedcd0782a0336f77832dbea1c81b9cc5e4b3a5ea5d2ec863aca7",
+              semgrep: "semgrep/semgrep:1.145.0@sha256:b68f9b68483955b85042dac7b4533757779625a02dcf91e470da4c2df1b430be",
+              syft: "anchore/syft:v1.37.0@sha256:48d679480c6d272c1801cf30460556959c01d4826795be31d4fd8b53750b7d91",
+            },
+            reports,
+          }, null, 2)}\n`);
+          NODE
+      - name: Upload APP-E-01 evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: app-e-01-evidence
+          path: app-e-01-evidence/*
+          if-no-files-found: error
+          retention-days: 30
+      - name: Fail the security gate when evidence is unavailable or noncompliant
+        if: always()
+        run: |
+          test "${{ steps.trivy.outcome }}" = success
+          test "${{ steps.semgrep.outcome }}" = success
+          test "${{ steps.sbom.outcome }}" = success
+          test "${{ steps.manifest.outcome }}" = success
