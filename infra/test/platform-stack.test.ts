@@ -1,7 +1,8 @@
 import * as cdk from "aws-cdk-lib";
 import { Template } from "aws-cdk-lib/assertions";
 import { describe, expect, it } from "vitest";
-import { ChibboApplicationStack, ChibboBootstrapStack, ChibboFoundationStack, ChibboMigratorStack, ChibboProwlerScannerStack, ChibboRegistryStack } from "../lib/platform-stack.js";
+import { gunzipSync } from "node:zlib";
+import { ChibboApplicationStack, ChibboBootstrapStack, ChibboFoundationStack, ChibboMigratorStack, ChibboProwlerScannerStack, ChibboRegistryStack, prowlerTvmRunnerGzipBase64 } from "../lib/platform-stack.js";
 
 function foundations(): { app: cdk.App; foundation: ChibboFoundationStack; registry: ChibboRegistryStack } {
   const app = new cdk.App({ defaultStackSynthesizer: new cdk.LegacyStackSynthesizer() });
@@ -29,6 +30,9 @@ describe("Chibbo staged infrastructure", () => {
     expect(json).toContain("ChibboProwlerReadOnlyRole");
     expect(json).toContain("s3:GetBucketPublicAccessBlock");
     expect(json).toContain("s3:ListAllMyBuckets");
+    expect(json).toContain("ReadOnlyTvmEc2AndRdsInventory");
+    expect(json).toContain("ec2:DescribeImages");
+    expect(json).toContain("rds:DescribeDBInstances");
     expect(json).toContain("gapzero-ec2-runtime");
     expect(json).toContain("s3:GetEncryptionConfiguration");
     expect(json).toContain("ReadOnlyChibboTrivySourceReport");
@@ -57,6 +61,19 @@ describe("Chibbo staged infrastructure", () => {
     expect(json).toContain("--log-driver none");
     expect(json).toContain("ChibboProwlerReadOnlyRole");
     expect(json).toContain("Environment=\\\"CHIBBO_PROWLER_RESOURCE_ARNS=");
+    expect(json).toContain("chibbo-run-prowler-tvm");
+    expect(json).toContain("chibbo-prowler-tvm.timer");
+    expect(json).toContain("OnCalendar=*-*-* 18:45:00 UTC");
+    expect(json).toContain(prowlerTvmRunnerGzipBase64);
+    const tvmRunner = gunzipSync(Buffer.from(prowlerTvmRunnerGzipBase64, "base64")).toString("utf8");
+    expect(tvmRunner).toContain("ec2_instance_older_than_specific_days");
+    expect(tvmRunner).toContain("ec2_instance_with_outdated_ami");
+    expect(tvmRunner).toContain("rds_instance_no_public_access");
+    expect(tvmRunner).toContain("--log-driver none");
+    // EC2 rejects user data over 16 KiB; role ARN tokens resolve to < 100 bytes.
+    const instance = Object.values(template.toJSON().Resources as Record<string, { Type: string; Properties: { UserData: { "Fn::Base64": { "Fn::Join": [string, unknown[]] } } } }>).find((resource) => resource.Type === "AWS::EC2::Instance")!;
+    const userData = instance.Properties.UserData["Fn::Base64"]["Fn::Join"][1].map((part) => (typeof part === "string" ? part : "x".repeat(100))).join("");
+    expect(Buffer.byteLength(userData)).toBeLessThan(16 * 1024);
     expect(json).toContain("chibbo-run-trivy-platform");
     expect(json).toContain("chibbo-trivy-platform.timer");
     expect(json).toContain("public.ecr.aws/aquasecurity/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa");
