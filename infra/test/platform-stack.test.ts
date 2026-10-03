@@ -31,9 +31,16 @@ describe("Chibbo staged infrastructure", () => {
     expect(json).toContain("s3:ListAllMyBuckets");
     expect(json).toContain("gapzero-ec2-runtime");
     expect(json).toContain("s3:GetEncryptionConfiguration");
+    expect(json).toContain("ReadOnlyChibboTrivySourceReport");
+    expect(json).toContain("exports/trivy/chibbo/latest.json");
+    expect(json).toContain("ReadOnlyChibboPlatformImageForTrivy");
+    expect(json).toContain("ecr:GetAuthorizationToken");
+    expect(json).toContain("DiscoverOnlyTheActiveChibboPlatformServiceForTrivy");
+    expect(json).toContain("ecs:DescribeTaskDefinition");
+    expect(json).toContain("chibbo-platform-test");
   });
 
-  it("separates scheduled Prowler collection from the application and exposes no ingress", () => {
+  it("separates scheduled Prowler and Trivy collection from the application and exposes no ingress", () => {
     const { app, foundation } = foundations();
     const stack = new ChibboProwlerScannerStack(app, "ChibboProwlerScannerTest", { env: { account: "992764023398", region: "ap-northeast-2" }, environmentName: "test", foundation });
     const template = Template.fromStack(stack);
@@ -46,9 +53,13 @@ describe("Chibbo staged infrastructure", () => {
     expect(json).toContain("HttpPutResponseHopLimit");
     expect(json).toContain("gapzero-evidence-992764023398-ap-northeast-2");
     expect(json).toContain("exports/prowler/chibbo/");
+    expect(json).toContain("exports/trivy/chibbo/latest.json");
     expect(json).toContain("--log-driver none");
     expect(json).toContain("ChibboProwlerReadOnlyRole");
     expect(json).toContain("Environment=\\\"CHIBBO_PROWLER_RESOURCE_ARNS=");
+    expect(json).toContain("chibbo-run-trivy-platform");
+    expect(json).toContain("chibbo-trivy-platform.timer");
+    expect(json).toContain("public.ecr.aws/aquasecurity/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa");
   });
 
   it("makes a bootstrap-only GitHub role and CloudFormation execution role", () => {
