@@ -11,5 +11,5 @@
     "test:security": "pnpm --filter @chibbo/testing test",
     "infra:synth": "pnpm --dir infra synth"
   },
-  "devDependencies": { "typescript": "5.7.3" }
+  "devDependencies": { "typescript": "7.0.2" }
 }
