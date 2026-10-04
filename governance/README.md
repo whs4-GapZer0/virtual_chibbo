@@ -34,7 +34,7 @@
   - 배포 워크플로 실행은 그 실행 시간 동안 파이프라인 역할의 CloudTrail 쓰기 이벤트가 있을 때만 실행으로 센다. 그 실행의 head 커밋을 만든 PR이 변경 기록이다.
   - 사람 계정(IAM 사용자·루트·SSO)의 치뽀 리소스 쓰기 이벤트는 사람·자산·날짜별 실행 하나로 묶는다. 같은 자산과 실행 예정 시간대를 가진 승인된 `change` 이슈가 있으면 그 이슈가 변경 기록이다.
   - 서비스·워크로드 역할(ECS, SSM 에이전트, 스캐너)의 호출과 세션 시작은 변경으로 세지 않는다.
-- 이미지 도입: CloudTrail의 ECS `CreateService`·`UpdateService`가 가리킨 작업 정의의 `chibbo-platform-dev@sha256:…` digest마다 도입 한 건이다. 배포 워크플로가 `tvm-e-03-verification` 산출물(서명 검증 보고서)을 남기면 검증·인수검사 칸이 채워진다.
+- 이미지 도입: CloudTrail의 ECS `RunTask`(마이그레이션 작업)·`CreateService`·`UpdateService`가 가리킨 작업 정의의 `chibbo-platform-dev@sha256:…` digest마다 도입 한 건이다. 배포 워크플로가 `tvm-e-03-verification` 산출물(서명 검증 보고서)을 남기면 검증·인수검사 칸이 채워진다.
 - CloudTrail 이력은 90일까지라 GRC는 89일을 검사한다. 최근 15분은 CloudTrail 지연 때문에 수집 범위에 넣지 않는다.
 - 보안 이벤트(events)는 치뽀 자산을 덮는 SIEM이 생길 때까지 내보내지 않는다. 그동안 GRC TVM-E-04는 평가 불가다.
 

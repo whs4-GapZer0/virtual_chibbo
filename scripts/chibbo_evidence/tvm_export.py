@@ -13,7 +13,8 @@ Sources (see governance/README.md):
 * executions   deployment runs that CloudTrail shows actually changed AWS,
                plus write events by people outside the pipeline
 * exceptions   ``risk-acceptance`` issues approved by a listed approver
-* deployments  ECS CreateService/UpdateService of the platform image
+* deployments  ECS RunTask/CreateService/UpdateService of the platform image
+               (the migration task is the image's first use in a release)
 * intakes      one per deployed image digest; verifications from the
                deploy job's ``tvm-e-03-verification`` artifact
 * registers    governance/ suppliers, assets, CTI, priority rules, tuning
@@ -69,6 +70,8 @@ CHANGE_EVENT = re.compile(
 # Sessions, queries and log delivery are not changes to the system.
 NOT_A_CHANGE = {"StartSession", "ResumeSession", "StartQuery", "CreateLogStream", "PutLogEvents",
                 "StartLiveTail", "CreateSession", "CreateToken", "AssumeRole"}
+# A release first runs its image as the one-off migration task, then as the service.
+IMAGE_USE_EVENTS = {"RunTask", "CreateService", "UpdateService"}
 VERIFICATION_ARTIFACT = "tvm-e-03-verification"
 VERIFICATION_SCHEMA = "chibbo.image-verification/v1"
 IN_HOUSE_SUPPLIER = "SUP-CHIBBO-CI"
@@ -173,6 +176,14 @@ def classify(raw: Raw, registers: Registers) -> list[Change]:
             or registers.asset_for_event_source(event.get("eventSource", ""))
         changes.append(Change(event, at, arn, category, asset))
     return sorted(changes, key=lambda item: item.at)
+
+
+def _task_definition(event: dict[str, Any]) -> str:
+    request = event.get("requestParameters") or {}
+    response = event.get("responseElements") or {}
+    tasks = response.get("tasks") if isinstance(response.get("tasks"), list) else []
+    return (request.get("taskDefinition") or (response.get("service") or {}).get("taskDefinition")
+            or next((task.get("taskDefinitionArn") for task in tasks if isinstance(task, dict)), "") or "")
 
 
 # -- builders ----------------------------------------------------------------
@@ -315,12 +326,11 @@ def build(raw: Raw, registers: Registers, *, instance_id: str, now: datetime, ru
     marker = f"/{raw.platform_repository}@sha256:"
     first_use: dict[str, datetime] = {}
     for event in sorted(raw.events, key=lambda item: item.get("eventTime", "")):
-        if event.get("eventSource") != "ecs.amazonaws.com" or event.get("eventName") not in {"CreateService", "UpdateService"}:
+        if event.get("eventSource") != "ecs.amazonaws.com" or event.get("eventName") not in IMAGE_USE_EVENTS:
             continue
         if event.get("errorCode"):
             continue
-        reference = ((event.get("requestParameters") or {}).get("taskDefinition")
-                     or (((event.get("responseElements") or {}).get("service") or {}).get("taskDefinition")))
+        reference = _task_definition(event)
         digests = [image.split("@", 1)[1] for image in raw.task_images.get(reference or "", []) if marker in image]
         at = parse_time(event.get("eventTime"))
         if not digests or at is None:
@@ -369,7 +379,7 @@ def build(raw: Raw, registers: Registers, *, instance_id: str, now: datetime, ru
         "changes": "GitHub 병합 PR·리뷰, change 이슈", "executions": "Actions 배포 실행 + CloudTrail 쓰기 이벤트(ap-northeast-2, us-east-1)",
         "exceptions": "risk-acceptance 이슈", "intakes": "CloudTrail ECS 배포 + 배포 검증 산출물", "suppliers": "governance/suppliers.json",
         "verifications": f"Actions 산출물 {VERIFICATION_ARTIFACT}", "hardware": "없음(클라우드 전용)",
-        "deployments": "CloudTrail ECS CreateService·UpdateService", "cti": "governance/tvm/cti.json",
+        "deployments": "CloudTrail ECS RunTask·CreateService·UpdateService", "cti": "governance/tvm/cti.json",
         "assets": "governance/assets.json", "rules": "governance/tvm/rules.json", "tuning": "governance/tvm/tuning.json",
     }
     end = now - TRAIL_LAG
@@ -414,10 +424,8 @@ def fetch(registers: Registers, *, repository: str, token: str, environment: str
     for trail_region in dict.fromkeys((region, "us-east-1")):
         raw.events.extend(aws.write_events(trail_region, start, now))
     raw.stack_resources = aws.stack_resources(region, "Chibbo")
-    references = {((event.get("requestParameters") or {}).get("taskDefinition")
-                   or (((event.get("responseElements") or {}).get("service") or {}).get("taskDefinition")))
-                  for event in raw.events
-                  if event.get("eventSource") == "ecs.amazonaws.com" and event.get("eventName") in {"CreateService", "UpdateService"}}
+    references = {_task_definition(event) for event in raw.events
+                  if event.get("eventSource") == "ecs.amazonaws.com" and event.get("eventName") in IMAGE_USE_EVENTS}
     for reference in sorted(item for item in references if item):
         raw.task_images[reference] = aws.task_definition_images(region, reference)
     return raw
