@@ -126,6 +126,29 @@ describe("Chibbo staged infrastructure", () => {
     expect(json).not.toContain("AdministratorAccess");
   });
 
+  it("gives the daily TVM export its own environment-bound, write-only-to-exports role", () => {
+    const app = new cdk.App({ defaultStackSynthesizer: new cdk.LegacyStackSynthesizer() });
+    const stack = new ChibboBootstrapStack(app, "ChibboBootstrapTest", { env: { account: "992764023398", region: "ap-northeast-2" }, environmentName: "test", githubOidcProviderArn: "arn:aws:iam::992764023398:oidc-provider/token.actions.githubusercontent.com", githubOwnerId: "331039235", githubRepositoryId: "1398534215" });
+    const template = Template.fromStack(stack);
+    const json = JSON.stringify(template.toJSON());
+    template.hasResourceProperties("AWS::IAM::Role", {
+      RoleName: "chibbo-test-tvm-exporter",
+      MaxSessionDuration: 3600,
+      AssumeRolePolicyDocument: { Statement: [{ Action: "sts:AssumeRoleWithWebIdentity", Condition: { StringEquals: {
+        "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+        "token.actions.githubusercontent.com:sub": "repo:whs4-GapZer0@331039235/virtual_chibbo@1398534215:environment:chibbo-test-evidence",
+      } } }] },
+    });
+    expect(json).toContain("cloudtrail:LookupEvents");
+    expect(json).toContain("cloudformation:ListStackResources");
+    expect(json).toContain("gapzero-evidence-992764023398-ap-northeast-2/exports/tvm/chibbo/*");
+    expect(json).toContain("TvmExporterRoleArn");
+    const policies = Object.values(template.findResources("AWS::IAM::Policy")) as Array<{ Properties: { Roles: Array<{ Ref: string }>; PolicyDocument: { Statement: Array<{ Action: string | string[] }> } } }>;
+    const exporter = policies.filter((policy) => policy.Properties.Roles.some((role) => role.Ref.startsWith("TvmExporterRole")));
+    const actions = exporter.flatMap((policy) => policy.Properties.PolicyDocument.Statement.flatMap((statement) => [statement.Action].flat()));
+    expect(actions.sort()).toEqual(["cloudformation:ListStackResources", "cloudformation:ListStacks", "cloudtrail:LookupEvents", "ecs:DescribeTaskDefinition", "s3:PutObject"]);
+  });
+
   it("pins the migration task to a digest and supplies only migration credentials", () => {
     const { app, foundation, registry } = foundations();
     const stack = new ChibboMigratorStack(app, "ChibboMigratorTest", { env: { account: "992764023398", region: "ap-northeast-2" }, environmentName: "test", foundation, repository: registry.repository, imageDigest: "sha256:0123456789abcdef", runtimeConfigSecretName: "chibbo/test/runtime", migratorDbSecretName: "chibbo/test/migrator", appDbSecretName: "chibbo/test/app" });
