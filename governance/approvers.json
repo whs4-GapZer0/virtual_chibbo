@@ -1,0 +1,6 @@
+{
+  "schema": "chibbo.approvers/v1",
+  "_설명": "승인 라벨을 붙일 수 있는 GitHub 계정. 작성자 본인의 라벨은 승인으로 보지 않는다. change는 change-approved, risk_acceptance는 risk-accepted 라벨이다.",
+  "change": ["6kitty"],
+  "risk_acceptance": ["6kitty"]
+}

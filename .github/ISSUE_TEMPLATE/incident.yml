@@ -1,16 +1,69 @@
 name: Incident
-description: Record a security, availability, or privacy incident.
+description: Record the analysis of a security, availability, or privacy event.
 title: "[Incident] "
 labels: [incident]
 body:
   - type: markdown
     attributes:
-      value: "개인정보나 비밀값은 Issue 본문에 붙이지 말고, 식별 가능한 최소 정보와 대응 기록만 남깁니다."
-  - type: textarea
-    id: detection
+      value: |
+        개인정보나 비밀값은 본문에 붙이지 말고, 식별 가능한 최소 정보와 대응 기록만 남깁니다.
+        경보 ID·CTI·우선순위·대응 수준·분석 결과는 GRC TVM-E-04가 승인된 우선순위 규칙(`governance/tvm/rules.json`)과 대조합니다.
+  - type: input
+    id: detected_at
     attributes:
-      label: 발견 시각과 탐지 경로
-      description: UTC 또는 KST 기준 시각, 모니터링·사용자 신고·감사 로그 여부를 적습니다.
+      label: 탐지 시각 (KST)
+      description: "YYYY-MM-DD HH:MM"
+    validations:
+      required: true
+  - type: dropdown
+    id: asset
+    attributes:
+      label: 대상 자산
+      options:
+        - A-01 AWS 계정 관리 평면 (IAM·KMS·CloudTrail·Config·CloudFormation)
+        - A-02 VPC chibbo 네트워크
+        - A-03 ALB 공개 HTTPS 진입점
+        - A-04 채용지원 플랫폼 애플리케이션 (ECS Fargate·ECR 이미지)
+        - A-05 RDS PostgreSQL
+        - A-06 S3 이력서 버킷
+        - A-07 S3 감사·구성 이력 버킷
+        - A-08 GitHub 저장소 virtual_chibbo
+        - A-14 Prowler 스캐너 EC2
+    validations:
+      required: true
+  - type: input
+    id: alert_ref
+    attributes:
+      label: 경보·이벤트 ID
+      description: Wazuh 경보 ID 또는 CloudTrail eventId
+    validations:
+      required: true
+  - type: input
+    id: cti_id
+    attributes:
+      label: CTI ID
+      description: "governance/tvm/cti.json의 ID, 연결된 CTI가 없으면 '없음'"
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 우선순위
+      options: [critical, high, medium, low]
+    validations:
+      required: true
+  - type: dropdown
+    id: response_level
+    attributes:
+      label: 대응 수준
+      options: [immediate, same_day, next_business_day, monitor]
+    validations:
+      required: true
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: 분석 결과
+      options: [true_positive, false_positive, false_negative, investigating]
     validations:
       required: true
   - type: textarea

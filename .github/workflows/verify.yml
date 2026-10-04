@@ -28,6 +28,12 @@ jobs:
       - run: pnpm test
       - run: pnpm build
       - run: pnpm --dir infra synth
+      - name: Validate governance registers and evidence scripts
+        env:
+          PYTHONPATH: scripts
+        run: |
+          python3 -m chibbo_evidence.registers governance
+          python3 -m unittest discover -s scripts/chibbo_evidence/tests -t scripts
       - name: Prepare APP-E-01 evidence directory
         run: mkdir --parents app-e-01-evidence
       - name: Scan the checked-out commit with Trivy

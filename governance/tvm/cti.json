@@ -1,0 +1,5 @@
+{
+  "schema": "chibbo.cti/v1",
+  "_설명": "분석에 쓰는 승인된 위협 정보(CTI). 항목: cti_id, source_ref, approved_by, valid_from, expires_at(ISO 8601, KST 오프셋 포함), indicator_ref, threat_level(low·medium·high·critical).",
+  "items": []
+}

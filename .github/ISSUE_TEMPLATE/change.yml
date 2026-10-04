@@ -1,11 +1,46 @@
 name: Change
-description: Record a reviewed production, infrastructure, or security change.
+description: Record a console, CLI or operational change that no pull request records.
 title: "[Change] "
 labels: [change]
 body:
   - type: markdown
     attributes:
-      value: "치뽀 채용지원 서비스의 변경은 배포 전 영향과 롤백 방법을 남깁니다."
+      value: |
+        코드·인프라 정의 변경은 PR이 변경 기록입니다. 이 양식은 콘솔·CLI로 직접 하는 변경처럼 PR로 남지 않는 변경을 **실행 전에** 기록합니다.
+        승인자(`governance/approvers.json`의 `change`, 작성자 제외)가 `change-approved` 라벨을 붙인 시각이 승인 시각입니다.
+        CloudTrail에서 같은 자산·실행 예정 시간대에 확인된 수동 변경만 이 기록과 연결됩니다.
+  - type: dropdown
+    id: asset
+    attributes:
+      label: 대상 자산
+      options:
+        - A-01 AWS 계정 관리 평면 (IAM·KMS·CloudTrail·Config·CloudFormation)
+        - A-02 VPC chibbo 네트워크
+        - A-03 ALB 공개 HTTPS 진입점
+        - A-04 채용지원 플랫폼 애플리케이션 (ECS Fargate·ECR 이미지)
+        - A-05 RDS PostgreSQL
+        - A-06 S3 이력서 버킷
+        - A-07 S3 감사·구성 이력 버킷
+        - A-08 GitHub 저장소 virtual_chibbo
+        - A-14 Prowler 스캐너 EC2
+    validations:
+      required: true
+  - type: input
+    id: window_start
+    attributes:
+      label: 실행 예정 시작 (KST)
+      description: "YYYY-MM-DD HH:MM"
+      placeholder: "2026-10-08 10:00"
+    validations:
+      required: true
+  - type: input
+    id: window_end
+    attributes:
+      label: 실행 예정 종료 (KST)
+      description: "YYYY-MM-DD HH:MM"
+      placeholder: "2026-10-08 12:00"
+    validations:
+      required: true
   - type: textarea
     id: purpose
     attributes:
@@ -14,16 +49,23 @@ body:
     validations:
       required: true
   - type: textarea
-    id: validation
+    id: risk
     attributes:
-      label: 검토와 검증 계획
-      description: PR, 테스트, 승인자, 배포 후 확인 항목을 적습니다.
+      label: 위험 평가
+      description: 영향, 발생 가능성, 등급(낮음·보통·높음), 완화 조치를 적습니다.
     validations:
       required: true
   - type: textarea
     id: rollback
     attributes:
       label: 롤백 방법
-      description: 실패 시 되돌릴 버전과 데이터 영향 여부를 적습니다.
+      description: 실패 시 되돌릴 방법과 데이터 영향 여부를 적습니다.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: 검증 계획
+      description: 실행 후 확인할 항목을 적습니다.
     validations:
       required: true

@@ -1,0 +1,5 @@
+{
+  "schema": "chibbo.tuning/v1",
+  "_설명": "오탐·미탐 이후 규칙·플레이북 개선 검토. 항목: event_id, rule_id, reviewed_at, disposition(updated·retained_with_reason), rule_version, evidence_ref.",
+  "reviews": []
+}
