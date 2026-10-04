@@ -181,13 +181,13 @@ jobs:
               json.dump(report, handle, ensure_ascii=False, indent=2)
           PY
       - name: Keep the verification report for GRC TVM-E-03
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tvm-e-03-verification
           path: ${{ runner.temp }}/tvm-e-03/report/tvm-e-03-verification.json
           retention-days: 90
       - name: Keep the image SBOM and cosign verification output
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tvm-e-03-sbom
           path: ${{ runner.temp }}/tvm-e-03/sbom/
