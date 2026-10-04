@@ -115,7 +115,9 @@ export class ChibboBootstrapStack extends Stack {
       sid: "SignAndVerifyReleaseImages",
       actions: ["kms:DescribeKey", "kms:GetPublicKey", "kms:Sign"],
       resources: [this.formatArn({ service: "kms", resource: "key", resourceName: "*" })],
-      conditions: { "ForAnyValue:StringEquals": { "kms:ResourceAliases": `alias/chibbo/${props.environmentName}/image-signing` } },
+      // The calls name the key by this alias; kms:RequestAlias applies at once,
+      // unlike kms:ResourceAliases, which lags a new alias by minutes.
+      conditions: { StringEquals: { "kms:RequestAlias": `alias/chibbo/${props.environmentName}/image-signing` } },
     }));
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["s3:GetBucketLocation", "s3:ListBucket"], resources: [this.deploymentAssetsBucket.bucketArn] }));
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["s3:GetObject", "s3:PutObject"], resources: [this.deploymentAssetsBucket.arnForObjects("cloudformation/*")] }));

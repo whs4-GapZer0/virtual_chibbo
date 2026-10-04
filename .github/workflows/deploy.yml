@@ -131,7 +131,9 @@ jobs:
           evidence="$RUNNER_TEMP/tvm-e-03"
           mkdir -p "$evidence/sbom"
           # The SBOM describes the exact pushed ARM64 image, not the source tree.
-          docker run --rm --volume "$HOME/.docker:/root/.docker:ro" --volume "$evidence/sbom:/out" \
+          # The Syft image has no home directory, so pass the ECR login explicitly.
+          docker run --rm --volume "$HOME/.docker/config.json:/config/config.json:ro" --env DOCKER_CONFIG=/config \
+            --volume "$evidence/sbom:/out" \
             anchore/syft:v1.37.0@sha256:48d679480c6d272c1801cf30460556959c01d4826795be31d4fd8b53750b7d91 \
             "registry:${image}" --platform linux/arm64 -o spdx-json=/out/sbom.spdx.json
           export COSIGN_REPOSITORY="$signatures_uri"
