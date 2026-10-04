@@ -1,4 +1,4 @@
-FROM node:22.14.0-bookworm-slim AS build
+FROM node:26.10.0-bookworm-slim AS build
 WORKDIR /workspace
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
@@ -9,7 +9,7 @@ COPY apps ./apps
 COPY database ./database
 RUN pnpm --filter @chibbo/platform build
 
-FROM node:22.14.0-bookworm-slim AS runtime
+FROM node:26.10.0-bookworm-slim AS runtime
 WORKDIR /app
 # Trust only the current Amazon RDS root-CA bundle in addition to Node's
 # standard trust store. This lets pg verify the private RDS endpoint rather
