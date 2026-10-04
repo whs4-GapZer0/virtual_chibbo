@@ -16,6 +16,7 @@ INSTANCE = "038485873836"
 RUN = "https://github.com/whs4-GapZer0/virtual_chibbo/actions/runs/{}"
 DIGEST = "sha256:" + "ab" * 32
 TASK = "arn:aws:ecs:ap-northeast-2:992764023398:task-definition/ChibboApplicationDevTask:7"
+MIGRATOR = "arn:aws:ecs:ap-northeast-2:992764023398:task-definition/ChibboMigratorDevMigrationTask:3"
 
 
 def body(asset: str, risk: str) -> str:
@@ -82,6 +83,7 @@ def raw() -> tvm_export.Raw:
     data.events = [
         event("e1", "2026-10-03T20:43:00Z", "ExecuteChangeSet", "cloudformation.amazonaws.com", DEPLOY, request={"stackName": "ChibboProwlerScannerDev"}),
         event("e1b", "2026-10-03T20:44:00Z", "RunInstances", "ec2.amazonaws.com", CFN, response={"instancesSet": {"items": [{"instanceId": "i-0scanner123"}]}}),
+        event("e2m", "2026-10-05T04:07:00Z", "RunTask", "ecs.amazonaws.com", DEPLOY, request={"taskDefinition": MIGRATOR}),
         event("e2", "2026-10-05T04:10:00Z", "UpdateService", "ecs.amazonaws.com", CFN, request={"taskDefinition": TASK}),
         event("e3", "2026-10-03T18:00:00Z", "PutRolePolicy", "iam.amazonaws.com", USER, region="us-east-1", request={"roleName": "ChibboProwlerReadOnlyRole"}),
         event("e4", "2026-10-03T18:05:00Z", "PutRolePolicy", "iam.amazonaws.com", USER, region="us-east-1", request={"roleName": "ChibboProwlerReadOnlyRole"}),
@@ -91,7 +93,8 @@ def raw() -> tvm_export.Raw:
         event("e8", "2026-10-05T01:33:00Z", "StartSession", "ssm.amazonaws.com", SSO, request={"target": "i-0scanner123"}),
         event("e9", "2026-10-04T10:00:00Z", "CreateChangeSet", "cloudformation.amazonaws.com", DEPLOY, request={"stackName": "ChibboFoundationDev"}),
     ]
-    data.task_images = {TASK: [f"992764023398.dkr.ecr.ap-northeast-2.amazonaws.com/chibbo-platform-dev@{DIGEST}"]}
+    image = f"992764023398.dkr.ecr.ap-northeast-2.amazonaws.com/chibbo-platform-dev@{DIGEST}"
+    data.task_images = {TASK: [image], MIGRATOR: [image]}
     data.change_issues = [issue(30, "jae", {
         "대상 자산": "A-02 VPC chibbo 네트워크", "실행 예정 시작 (KST)": "2026-10-05 10:00", "실행 예정 종료 (KST)": "2026-10-05 11:00",
         "변경 목적과 범위": "보안 그룹 규칙 추가", "위험 평가": "낮음", "롤백 방법": "규칙 삭제", "검증 계획": "접속 확인",
@@ -165,11 +168,12 @@ class TvmExportTest(unittest.TestCase):
         self.assertEqual((exceptions["RA-44"]["status"], exceptions["RA-44"]["approver"]), ("pending_approval", ""))  # self-approval
 
     def test_image_deployments_intakes_and_verifications(self) -> None:
-        [deployment] = self.tables["deployments"]
-        self.assertEqual((deployment["deployment_id"], deployment["artifact_id"], deployment["intake_id"]), ("CT-e2", DIGEST, "IMG-abababababab"))
+        deployments = [(row["deployment_id"], row["artifact_id"], row["intake_id"]) for row in self.tables["deployments"]]
+        self.assertEqual(deployments, [("CT-e2m", DIGEST, "IMG-abababababab"), ("CT-e2", DIGEST, "IMG-abababababab")])
         [intake] = self.tables["intakes"]
+        # The migration task is the first use, after the 04:06 gate.
         self.assertEqual((intake["supplier_id"], intake["first_used_at"], intake["inspected_at"]),
-                         ("SUP-CHIBBO-CI", "2026-10-05T13:10:00+09:00", "2026-10-05T13:06:00+09:00"))
+                         ("SUP-CHIBBO-CI", "2026-10-05T13:07:00+09:00", "2026-10-05T13:06:00+09:00"))
         [verification] = self.tables["verifications"]
         self.assertEqual((verification["method"], verification["result"]), ("signature", "passed"))
         self.assertEqual(self.tables["hardware"], [])
