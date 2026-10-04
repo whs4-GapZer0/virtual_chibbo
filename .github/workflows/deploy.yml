@@ -115,6 +115,81 @@ jobs:
           digest="$(aws ecr describe-images --repository-name chibbo-platform-dev --image-ids imageTag="${GITHUB_SHA}" --query 'imageDetails[0].imageDigest' --output text)"
           test -n "$digest" && test "$digest" != "None"
           printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.1
+      - name: Sign the pushed digest and its image SBOM with the Chibbo KMS key
+        id: sign
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          repository_uri="$(aws cloudformation describe-stacks --stack-name ChibboRegistryDev --query 'Stacks[0].Outputs[?OutputKey==`PlatformRepositoryUri`].OutputValue' --output text)"
+          signatures_uri="$(aws cloudformation describe-stacks --stack-name ChibboRegistryDev --query 'Stacks[0].Outputs[?OutputKey==`PlatformSignatureRepositoryUri`].OutputValue' --output text)"
+          test -n "$signatures_uri" && test "$signatures_uri" != "None"
+          image="${repository_uri}@${IMAGE_DIGEST}"
+          evidence="$RUNNER_TEMP/tvm-e-03"
+          mkdir -p "$evidence/sbom"
+          # The SBOM describes the exact pushed ARM64 image, not the source tree.
+          docker run --rm --volume "$HOME/.docker:/root/.docker:ro" --volume "$evidence/sbom:/out" \
+            anchore/syft:v1.37.0@sha256:48d679480c6d272c1801cf30460556959c01d4826795be31d4fd8b53750b7d91 \
+            "registry:${image}" --platform linux/arm64 -o spdx-json=/out/sbom.spdx.json
+          export COSIGN_REPOSITORY="$signatures_uri"
+          key="awskms:///alias/chibbo/dev/image-signing"
+          cosign sign --yes --tlog-upload=false --key "$key" "$image"
+          cosign attest --yes --tlog-upload=false --key "$key" --type spdxjson --predicate "$evidence/sbom/sbom.spdx.json" "$image"
+          printf 'image=%s\nsignatures=%s\n' "$image" "$signatures_uri" >> "$GITHUB_OUTPUT"
+      - name: Verify the signature and SBOM before any task runs the image
+        env:
+          IMAGE: ${{ steps.sign.outputs.image }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          COSIGN_REPOSITORY: ${{ steps.sign.outputs.signatures }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          evidence="$RUNNER_TEMP/tvm-e-03"
+          mkdir -p "$evidence/report"
+          key="awskms:///alias/chibbo/dev/image-signing"
+          key_arn="$(aws kms describe-key --key-id alias/chibbo/dev/image-signing --query KeyMetadata.Arn --output text)"
+          test -n "$key_arn" && test "$key_arn" != "None"
+          # Any failure here stops the release before the migration task or
+          # the service can run an unsigned or altered image.
+          cosign verify --key "$key" --insecure-ignore-tlog=true "$IMAGE" > "$evidence/sbom/cosign-verify.json"
+          cosign verify-attestation --key "$key" --insecure-ignore-tlog=true --type spdxjson "$IMAGE" > "$evidence/sbom/cosign-verify-attestation.json"
+          VERIFIED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" KEY_ARN="$key_arn" \
+            python3 - "$evidence/report/tvm-e-03-verification.json" <<'PY'
+          import json, os, sys
+          from datetime import datetime, timezone
+          digest = os.environ["IMAGE_DIGEST"]
+          report = {
+              "schema": "chibbo.image-verification/v1",
+              "artifact_id": digest,
+              "verified_at": os.environ["VERIFIED_AT"],
+              # The deployment gate accepts the image only after verification passed.
+              "inspected_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "method": "signature",
+              "result": "passed",
+              "expected_sha256": "",
+              "actual_sha256": "",
+              "trusted_source_ref": f"{os.environ['KEY_ARN']} (alias/chibbo/dev/image-signing)",
+              "report_ref": os.environ["RUN_URL"],
+              "sbom_ref": f"{os.environ['COSIGN_REPOSITORY']}:sha256-{digest.split(':', 1)[1]}.att (SPDX, cosign attestation)",
+              "image": os.environ["IMAGE"],
+          }
+          with open(sys.argv[1], "w", encoding="utf-8") as handle:
+              json.dump(report, handle, ensure_ascii=False, indent=2)
+          PY
+      - name: Keep the verification report for GRC TVM-E-03
+        uses: actions/upload-artifact@v4
+        with:
+          name: tvm-e-03-verification
+          path: ${{ runner.temp }}/tvm-e-03/report/tvm-e-03-verification.json
+          retention-days: 90
+      - name: Keep the image SBOM and cosign verification output
+        uses: actions/upload-artifact@v4
+        with:
+          name: tvm-e-03-sbom
+          path: ${{ runner.temp }}/tvm-e-03/sbom/
+          retention-days: 90
       - name: Deploy digest-pinned migration task definition
         run: |
           template_dir="$(mktemp -d)"

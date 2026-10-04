@@ -107,7 +107,16 @@ export class ChibboBootstrapStack extends Stack {
       conditions: { StringEquals: { "iam:PassedToService": "config.amazonaws.com" } },
     }));
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["ecr:GetAuthorizationToken"], resources: ["*"] }));
-    this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "ecr:CompleteLayerUpload", "ecr:DescribeImages", "ecr:InitiateLayerUpload", "ecr:PutImage", "ecr:UploadLayerPart"], resources: [this.formatArn({ service: "ecr", resource: "repository", resourceName: `chibbo-platform-${props.environmentName}` })] }));
+    this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "ecr:CompleteLayerUpload", "ecr:DescribeImages", "ecr:GetDownloadUrlForLayer", "ecr:InitiateLayerUpload", "ecr:PutImage", "ecr:UploadLayerPart"], resources: [this.formatArn({ service: "ecr", resource: "repository", resourceName: `chibbo-platform-${props.environmentName}` })] }));
+    // Release signing: push cosign signatures/SBOM attestations to the
+    // signature repository and sign only with the image-signing key alias.
+    this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ sid: "PushImageSignatures", actions: ["ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "ecr:CompleteLayerUpload", "ecr:DescribeImages", "ecr:GetDownloadUrlForLayer", "ecr:InitiateLayerUpload", "ecr:ListImages", "ecr:PutImage", "ecr:UploadLayerPart"], resources: [this.formatArn({ service: "ecr", resource: "repository", resourceName: `chibbo-platform-${props.environmentName}-signatures` })] }));
+    this.githubDeployRole.addToPolicy(new iam.PolicyStatement({
+      sid: "SignAndVerifyReleaseImages",
+      actions: ["kms:DescribeKey", "kms:GetPublicKey", "kms:Sign"],
+      resources: [this.formatArn({ service: "kms", resource: "key", resourceName: "*" })],
+      conditions: { "ForAnyValue:StringEquals": { "kms:ResourceAliases": `alias/chibbo/${props.environmentName}/image-signing` } },
+    }));
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["s3:GetBucketLocation", "s3:ListBucket"], resources: [this.deploymentAssetsBucket.bucketArn] }));
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["s3:GetObject", "s3:PutObject"], resources: [this.deploymentAssetsBucket.arnForObjects("cloudformation/*")] }));
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["config:Describe*", "config:PutConfigRule", "config:PutConfigurationRecorder", "config:PutDeliveryChannel", "config:StartConfigurationRecorder"], resources: ["*"] }));
@@ -155,10 +164,26 @@ export class ChibboBootstrapStack extends Stack {
 export interface ChibboRegistryStackProps extends StackProps { environmentName: string; }
 export class ChibboRegistryStack extends Stack {
   public readonly repository: ecr.Repository;
+  public readonly signatureRepository: ecr.Repository;
+  public readonly imageSigningKey: kms.Key;
   constructor(scope: Construct, id: string, props: ChibboRegistryStackProps) {
     super(scope, id, props); tag(this, props.environmentName);
     this.repository = new ecr.Repository(this, "PlatformRepository", { repositoryName: `chibbo-platform-${props.environmentName}`, imageTagMutability: ecr.TagMutability.IMMUTABLE, imageScanOnPush: true, encryption: ecr.RepositoryEncryption.AES_256, lifecycleRules: [{ maxImageCount: 30 }], removalPolicy: RemovalPolicy.RETAIN });
+    // The release signs each pushed digest and its image SBOM with this
+    // non-exportable KMS key and verifies both before any task runs the
+    // image (GRC TVM-E-03).  Signatures live in their own repository so the
+    // immutable platform repository and its 30-image lifecycle hold images only.
+    this.imageSigningKey = new kms.Key(this, "ImageSigningKey", {
+      alias: `alias/chibbo/${props.environmentName}/image-signing`,
+      description: "Signs Chibbo platform image digests and SBOM attestations (cosign).",
+      keySpec: kms.KeySpec.ECC_NIST_P256,
+      keyUsage: kms.KeyUsage.SIGN_VERIFY,
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
+    this.signatureRepository = new ecr.Repository(this, "PlatformSignatureRepository", { repositoryName: `chibbo-platform-${props.environmentName}-signatures`, imageTagMutability: ecr.TagMutability.MUTABLE, encryption: ecr.RepositoryEncryption.AES_256, removalPolicy: RemovalPolicy.RETAIN });
     new CfnOutput(this, "PlatformRepositoryUri", { value: this.repository.repositoryUri });
+    new CfnOutput(this, "PlatformSignatureRepositoryUri", { value: this.signatureRepository.repositoryUri });
+    new CfnOutput(this, "ImageSigningKeyArn", { value: this.imageSigningKey.keyArn });
   }
 }
 
