@@ -36,6 +36,7 @@ export interface ChibboBootstrapStackProps extends StackProps { environmentName:
 /** Deploy once with a human operator's existing AWS credentials, before GitHub can deploy anything. */
 export class ChibboBootstrapStack extends Stack {
   public readonly githubDeployRole: iam.Role;
+  public readonly tvmExporterRole: iam.Role;
   public readonly cloudFormationExecutionRole: iam.Role;
   public readonly deploymentAssetsBucket: s3.Bucket;
   constructor(scope: Construct, id: string, props: ChibboBootstrapStackProps) {
@@ -146,7 +147,43 @@ export class ChibboBootstrapStack extends Stack {
       ],
       conditions: { StringEquals: { "iam:PassedToService": "ecs-tasks.amazonaws.com" } },
     }));
+    // The daily TVM evidence export (tvm-export workflow) runs in its own
+    // environment with its own role: it reads CloudTrail write history, the
+    // Chibbo stacks' resource IDs and task-definition images, and can only
+    // put workbooks under the GapZer0 evidence bucket's exports/tvm/chibbo/.
+    // GapZer0 reads that prefix with its own runtime role, so the writer and
+    // the judge never share an identity.
+    const evidenceExportSubject = `repo:whs4-GapZer0@${props.githubOwnerId}/virtual_chibbo@${props.githubRepositoryId}:environment:chibbo-${props.environmentName}-evidence`;
+    this.tvmExporterRole = new iam.Role(this, "TvmExporterRole", {
+      roleName: `chibbo-${props.environmentName}-tvm-exporter`,
+      description: "Exports Chibbo's real TVM change, intake and analysis records to the GapZer0 evidence bucket once a day.",
+      maxSessionDuration: Duration.hours(2),
+      assumedBy: new iam.FederatedPrincipal(provider.openIdConnectProviderArn, {
+        StringEquals: {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+          "token.actions.githubusercontent.com:sub": evidenceExportSubject,
+        },
+      }, "sts:AssumeRoleWithWebIdentity"),
+    });
+    // LookupEvents, ListStacks and DescribeTaskDefinition do not support
+    // resource-level scoping; none of them returns secrets or data contents.
+    this.tvmExporterRole.addToPolicy(new iam.PolicyStatement({
+      sid: "ReadChangeHistoryAndDeployedImages",
+      actions: ["cloudtrail:LookupEvents", "cloudformation:ListStacks", "ecs:DescribeTaskDefinition"],
+      resources: ["*"],
+    }));
+    this.tvmExporterRole.addToPolicy(new iam.PolicyStatement({
+      sid: "ReadChibboStackResourceIds",
+      actions: ["cloudformation:ListStackResources"],
+      resources: [this.formatArn({ service: "cloudformation", resource: "stack", resourceName: "Chibbo*/*" })],
+    }));
+    this.tvmExporterRole.addToPolicy(new iam.PolicyStatement({
+      sid: "WriteOnlyTvmEvidenceExports",
+      actions: ["s3:PutObject"],
+      resources: [`arn:${this.partition}:s3:::gapzero-evidence-${this.account}-${this.region}/exports/tvm/chibbo/*`],
+    }));
     new CfnOutput(this, "GithubDeployRoleArn", { value: this.githubDeployRole.roleArn });
+    new CfnOutput(this, "TvmExporterRoleArn", { value: this.tvmExporterRole.roleArn });
     new CfnOutput(this, "CloudFormationExecutionRoleArn", { value: this.cloudFormationExecutionRole.roleArn });
     new CfnOutput(this, "DeploymentAssetsBucketName", { value: this.deploymentAssetsBucket.bucketName });
   }
