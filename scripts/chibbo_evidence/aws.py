@@ -6,10 +6,10 @@ no third-party package.  Credentials come from the job's OIDC role.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import subprocess
-from typing import Any
+from typing import Any, Callable
 
 ACTIVE_STACK_STATUSES = (
     "CREATE_COMPLETE", "UPDATE_COMPLETE", "UPDATE_ROLLBACK_COMPLETE", "IMPORT_COMPLETE",
@@ -23,10 +23,10 @@ class AwsError(RuntimeError):
     """An AWS read failed; the export must not claim complete coverage."""
 
 
-def _cli(*args: str, region: str) -> Any:
+def _cli(*args: str, region: str, timeout: int = 600) -> Any:
     command = ["aws", *args, "--region", region, "--output", "json", "--no-cli-pager"]
     try:
-        result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=1800)
+        result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=timeout)
     except (OSError, subprocess.SubprocessError) as error:
         detail = getattr(error, "stderr", "") or str(error)
         raise AwsError(f"aws {' '.join(args[:2])} 실패: {detail.strip()[:300]}") from error
@@ -40,19 +40,29 @@ def _iso(value: datetime) -> str:
     return value.isoformat().replace("+00:00", "Z")
 
 
-def write_events(region: str, start: datetime, end: datetime) -> list[dict[str, Any]]:
-    """Every non-read-only management event in ``region`` between start and end."""
+def write_events(region: str, start: datetime, end: datetime,
+                 keep: Callable[[dict[str, Any]], bool] = lambda event: True) -> list[dict[str, Any]]:
+    """Every non-read-only management event in ``region`` between start and end that ``keep`` accepts.
 
-    payload = _cli("cloudtrail", "lookup-events", "--start-time", _iso(start), "--end-time", _iso(end),
-                   "--lookup-attributes", "AttributeKey=ReadOnly,AttributeValue=false", region=region)
+    Looked up one day at a time so a busy shared account never holds 90 days
+    of events in one response; any failed day fails the whole export.
+    """
+
     events = []
-    for item in payload.get("Events", []):
-        try:
-            event = json.loads(item["CloudTrailEvent"])
-        except (KeyError, TypeError, ValueError) as error:
-            raise AwsError("CloudTrail 이벤트 형식 오류") from error
-        event["_region"] = region
-        events.append(event)
+    cursor = start
+    while cursor < end:
+        upper = min(cursor + timedelta(days=1), end)
+        payload = _cli("cloudtrail", "lookup-events", "--start-time", _iso(cursor), "--end-time", _iso(upper),
+                       "--lookup-attributes", "AttributeKey=ReadOnly,AttributeValue=false", region=region, timeout=1200)
+        for item in payload.get("Events", []):
+            try:
+                event = json.loads(item["CloudTrailEvent"])
+            except (KeyError, TypeError, ValueError) as error:
+                raise AwsError("CloudTrail 이벤트 형식 오류") from error
+            event["_region"] = region
+            if keep(event):
+                events.append(event)
+        cursor = upper
     return events
 
 

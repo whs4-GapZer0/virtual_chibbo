@@ -133,7 +133,7 @@ describe("Chibbo staged infrastructure", () => {
     const json = JSON.stringify(template.toJSON());
     template.hasResourceProperties("AWS::IAM::Role", {
       RoleName: "chibbo-test-tvm-exporter",
-      MaxSessionDuration: 3600,
+      MaxSessionDuration: 7200,
       AssumeRolePolicyDocument: { Statement: [{ Action: "sts:AssumeRoleWithWebIdentity", Condition: { StringEquals: {
         "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
         "token.actions.githubusercontent.com:sub": "repo:whs4-GapZer0@331039235/virtual_chibbo@1398534215:environment:chibbo-test-evidence",

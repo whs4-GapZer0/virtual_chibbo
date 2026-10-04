@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from io import BytesIO
 import json
 import re
@@ -95,8 +96,21 @@ class GitHub:
         return pulls
 
     def workflow_runs(self, workflow_file: str, since: str) -> list[dict[str, Any]]:
-        return self._pages(f"/repos/{self.repository}/actions/workflows/{workflow_file}/runs",
-                           {"created": f">={since}"}, key="workflow_runs")
+        path = f"/repos/{self.repository}/actions/workflows/{workflow_file}/runs"
+        query = {"created": f">={since}"}
+        runs = self._pages(path, query, key="workflow_runs")
+        total, _ = self._json(path, {**query, "per_page": 1})
+        # A filtered run search stops at 1,000 results without an error.
+        if not isinstance(total, dict) or total.get("total_count") != len(runs):
+            raise GitHubError(f"{workflow_file} 실행 목록이 완전하지 않습니다 ({len(runs)}/{total.get('total_count') if isinstance(total, dict) else '?'}).")
+        return runs
+
+    def ancestors(self, sha: str, since: datetime) -> set[str]:
+        """Commits reachable from ``sha`` that were committed since ``since``."""
+
+        commits = self._pages(f"/repos/{self.repository}/commits",
+                              {"sha": sha, "since": since.strftime("%Y-%m-%dT%H:%M:%SZ")})
+        return {commit["sha"] for commit in commits if isinstance(commit.get("sha"), str)}
 
     def pull_for_commit(self, sha: str) -> int | None:
         """The pull request whose merge commit is exactly ``sha``."""

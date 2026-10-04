@@ -65,6 +65,13 @@ def raw() -> tvm_export.Raw:
              {"state": "APPROVED", "user": {"login": "6kitty"}, "submitted_at": "2026-10-04T05:00:00Z", "commit_id": "old"},
              {"state": "APPROVED", "user": {"login": "6kitty"}, "submitted_at": "2026-10-05T02:00:00Z", "commit_id": "h22"},
          ]},
+        {"number": 21, "user": {"login": "jae"}, "body": body("A-04", "보통"), "created_at": "2026-10-04T02:00:00Z",
+         "merged_at": "2026-10-04T08:00:00Z", "merge_commit_sha": "m21", "head": {"sha": "h21"},
+         "html_url": "https://github.com/whs4-GapZer0/virtual_chibbo/pull/21",
+         "reviews": [{"state": "APPROVED", "user": {"login": "outsider"}, "submitted_at": "2026-10-04T07:00:00Z", "commit_id": "h21"}]},
+        {"number": 23, "user": {"login": "jae"}, "body": body("A-08", "낮음: 문서"), "created_at": "2026-10-05T03:10:00Z",
+         "merged_at": "2026-10-05T03:30:00Z", "merge_commit_sha": "m23", "head": {"sha": "h23"},
+         "html_url": "https://github.com/whs4-GapZer0/virtual_chibbo/pull/23", "reviews": []},
     ]
     data.runs = [
         {"id": 1, "path": ".github/workflows/deploy-prowler-scanner.yml", "head_sha": "m20",
@@ -73,12 +80,15 @@ def raw() -> tvm_export.Raw:
          "run_started_at": "2026-10-05T04:00:00Z", "updated_at": "2026-10-05T04:20:00Z", "html_url": RUN.format(2)},
         {"id": 3, "path": ".github/workflows/deploy.yml", "head_sha": "m22",
          "run_started_at": "2026-10-05T05:00:00Z", "updated_at": "2026-10-05T05:01:00Z", "html_url": RUN.format(3)},
+        {"id": 4, "path": ".github/workflows/deploy.yml", "head_sha": "m22",
+         "run_started_at": "2026-10-05T06:00:00Z", "updated_at": "2026-10-05T06:20:00Z", "html_url": RUN.format(4)},
     ]
-    data.run_pulls = {"m20": 20, "m22": 22}
+    data.run_ancestors = {"m20": {"m20"}, "m22": {"m20", "m21", "m22"}}
     data.stack_resources = [
         {"stack": "ChibboProwlerScannerDev", "logical_id": "ProwlerScanner5E2A", "physical_id": "i-0scanner123", "type": "AWS::EC2::Instance"},
         {"stack": "ChibboFoundationDev", "logical_id": "AppSecurityGroupABC", "physical_id": "sg-0app456789", "type": "AWS::EC2::SecurityGroup"},
         {"stack": "ChibboFoundationDev", "logical_id": "ChibboProwlerReadOnlyRole9F", "physical_id": "ChibboProwlerReadOnlyRole", "type": "AWS::IAM::Role"},
+        {"stack": "ChibboFoundationDev", "logical_id": "ProwlerScannerRole1A", "physical_id": "chibbo-dev-prowler-scanner", "type": "AWS::IAM::Role"},
     ]
     data.events = [
         event("e1", "2026-10-03T20:43:00Z", "ExecuteChangeSet", "cloudformation.amazonaws.com", DEPLOY, request={"stackName": "ChibboProwlerScannerDev"}),
@@ -88,10 +98,16 @@ def raw() -> tvm_export.Raw:
         event("e3", "2026-10-03T18:00:00Z", "PutRolePolicy", "iam.amazonaws.com", USER, region="us-east-1", request={"roleName": "ChibboProwlerReadOnlyRole"}),
         event("e4", "2026-10-03T18:05:00Z", "PutRolePolicy", "iam.amazonaws.com", USER, region="us-east-1", request={"roleName": "ChibboProwlerReadOnlyRole"}),
         event("e5", "2026-10-05T01:30:00Z", "AuthorizeSecurityGroupIngress", "ec2.amazonaws.com", SSO, request={"groupId": "sg-0app456789"}),
-        event("e6", "2026-10-05T01:31:00Z", "UpdateInstanceInformation", "ssm.amazonaws.com", role("chibbo-dev-prowler-scanner"), request={"instanceId": "i-0scanner123"}),
+        event("e6", "2026-10-05T01:31:00Z", "CreateTags", "ec2.amazonaws.com", role("chibbo-dev-prowler-scanner"), request={"resourcesSet": "i-0scanner123"}),
+        event("e6b", "2026-10-05T01:31:30Z", "UpdateInstanceInformation", "ssm.amazonaws.com", SSO, request={"instanceId": "i-0scanner123"}),
         event("e7", "2026-10-05T01:32:00Z", "PutRolePolicy", "iam.amazonaws.com", USER, region="us-east-1", request={"roleName": "gapzero-ec2-runtime"}),
         event("e8", "2026-10-05T01:33:00Z", "StartSession", "ssm.amazonaws.com", SSO, request={"target": "i-0scanner123"}),
-        event("e9", "2026-10-04T10:00:00Z", "CreateChangeSet", "cloudformation.amazonaws.com", DEPLOY, request={"stackName": "ChibboFoundationDev"}),
+        event("e9", "2026-10-04T10:00:00Z", "ModifyDBInstance", "rds.amazonaws.com", CFN, request={"dBInstanceIdentifier": "chibbo-db"}),
+        event("e9b", "2026-10-04T10:05:00Z", "CreateChangeSet", "cloudformation.amazonaws.com", DEPLOY, request={"stackName": "ChibboFoundationDev"}),
+        {**event("e10", "2026-10-05T01:34:00Z", "DeleteSecurityGroup", "ec2.amazonaws.com", USER, request={"groupId": "sg-0app456789"}), "errorCode": "AccessDenied"},
+        event("e11", "2026-10-04T12:00:00Z", "TerminateInstances", "ec2.amazonaws.com", role("BreakGlassAdmin"), request={"instancesSet": {"items": [{"instanceId": "i-0scanner123"}]}}),
+        event("e12", "2026-10-05T06:05:00Z", "UpdateService", "ecs.amazonaws.com", CFN, request={"taskDefinition": TASK}),
+        event("e13", "2026-10-05T06:06:00Z", "UpdateService", "ecs.amazonaws.com", CFN, request={"desiredCount": 2}, response={"service": {"taskDefinition": TASK}}),
     ]
     image = f"992764023398.dkr.ecr.ap-northeast-2.amazonaws.com/chibbo-platform-dev@{DIGEST}"
     data.task_images = {TASK: [image], MIGRATOR: [image]}
@@ -125,14 +141,20 @@ class TvmExportTest(unittest.TestCase):
     def by(self, tab: str, key: str) -> dict[str, dict[str, str]]:
         return {row[key]: row for row in self.tables[tab]}
 
-    def test_pipeline_runs_that_changed_aws_are_executions_of_their_pull_request(self) -> None:
+    def test_each_pull_request_runs_in_the_first_deploy_that_ships_it(self) -> None:
         executions = self.by("executions", "execution_id")
-        self.assertEqual(executions["RUN-1"]["change_id"], "PR-20")
-        self.assertEqual(executions["RUN-1"]["asset_id"], "A-14")  # the scanner workflow's asset, which CloudTrail shows it touched
-        self.assertEqual(executions["RUN-1"]["executed_at"], "2026-10-04T05:43:00+09:00")
-        self.assertEqual(executions["RUN-2"]["change_id"], "PR-22")
-        self.assertEqual(executions["RUN-2"]["asset_id"], "A-04")
-        self.assertNotIn("RUN-3", executions)  # failed before changing anything
+        self.assertEqual(executions["RUN-1-PR20"]["change_id"], "PR-20")
+        # Undeclared asset: the scanner workflow's asset, which CloudTrail shows it touched.
+        self.assertEqual(executions["RUN-1-PR20"]["asset_id"], "A-14")
+        self.assertEqual(executions["RUN-1-PR20"]["executed_at"], "2026-10-04T05:44:00+09:00")
+        # One deploy shipped two merged pull requests: both are executions at the run's first write.
+        self.assertEqual({key: executions[key]["executed_at"] for key in ("RUN-2-PR21", "RUN-2-PR22")},
+                         {"RUN-2-PR21": "2026-10-05T13:07:00+09:00", "RUN-2-PR22": "2026-10-05T13:07:00+09:00"})
+        # A later re-run of the same commit re-applies them; it is noted, not a new unapproved execution.
+        self.assertIn(f"재실행 {RUN.format(4)}", executions["RUN-2-PR22"]["source_ref"])
+        self.assertFalse(any(key.startswith(("RUN-3", "RUN-4")) for key in executions))
+        # A repository-only change takes effect at merge.
+        self.assertEqual(executions["MERGE-PR23"]["executed_at"], "2026-10-05T12:30:00+09:00")
 
     def test_people_and_stray_pipeline_calls_are_out_of_band_executions(self) -> None:
         executions = self.by("executions", "execution_id")
@@ -141,17 +163,22 @@ class TvmExportTest(unittest.TestCase):
         self.assertIn("2건: PutRolePolicy", executions["CT-e3"]["source_ref"])
         self.assertEqual(executions["CT-e5"]["change_id"], "CHG-30")
         self.assertEqual(executions["CT-e5"]["asset_id"], "A-02")
-        self.assertEqual(executions["CT-e9"]["change_id"], "")
-        self.assertEqual(set(executions), {"RUN-1", "RUN-2", "CT-e3", "CT-e5", "CT-e9"})
+        # A pipeline write outside any run is out of band; a stray change set is not a change.
+        self.assertEqual((executions["CT-e9"]["change_id"], executions["CT-e9"]["asset_id"]), ("", "A-05"))
+        # A non-SSO role is still a person's change; workloads, heartbeats and failed calls are not.
+        self.assertEqual(executions["CT-e11"]["asset_id"], "A-14")
+        self.assertEqual({key for key in executions if key.startswith("CT-")}, {"CT-e3", "CT-e5", "CT-e9", "CT-e11"})
 
     def test_change_records_carry_only_real_assessment_and_approval(self) -> None:
         changes = self.by("changes", "change_id")
         self.assertEqual({k: changes["PR-20"][k] for k in ("asset_id", "risk_ref", "approver", "executed_at")},
-                         {"asset_id": "", "risk_ref": "", "approver": "", "executed_at": "2026-10-04T05:43:00+09:00"})
+                         {"asset_id": "", "risk_ref": "", "approver": "", "executed_at": "2026-10-04T05:44:00+09:00"})
+        self.assertEqual(changes["PR-21"]["approver"], "")  # an approval by someone not listed in approvers.json
         self.assertEqual(changes["PR-22"]["approver"], "6kitty")  # not the author, and on the merged commit
         self.assertEqual(changes["PR-22"]["approved_at"], "2026-10-05T11:00:00+09:00")
         self.assertEqual(changes["PR-22"]["assessed_at"], "2026-10-04T10:00:00+09:00")
         self.assertEqual(changes["PR-22"]["result_ref"], RUN.format(2))
+        self.assertEqual(changes["PR-22"]["executed_at"], "2026-10-05T13:07:00+09:00")
         self.assertEqual(changes["CHG-30"]["approver"], "6kitty")
         self.assertEqual(changes["CHG-30"]["executed_at"], "2026-10-05T10:30:00+09:00")
 
@@ -161,15 +188,16 @@ class TvmExportTest(unittest.TestCase):
         self.assertEqual(exceptions["RA-40"]["expires_at"], "2026-11-30T23:59:59+09:00")
         self.assertEqual(exceptions["RA-40"]["review_at"], "2026-11-15T23:59:59+09:00")
         self.assertEqual(exceptions["RA-40"]["compensating_control"], "WAF 차단 규칙")
-        self.assertEqual(exceptions["RA-41"]["status"], "pending_approval")
         self.assertEqual(exceptions["RA-42"]["status"], "closed")
         self.assertIn("completed", exceptions["RA-42"]["closure_ref"])
-        self.assertNotIn("RA-43", exceptions)  # rejected requests are not exceptions
-        self.assertEqual((exceptions["RA-44"]["status"], exceptions["RA-44"]["approver"]), ("pending_approval", ""))  # self-approval
+        # Undecided, rejected and self-approved requests are not exceptions in effect.
+        self.assertEqual(set(exceptions), {"RA-40", "RA-42"})
 
     def test_image_deployments_intakes_and_verifications(self) -> None:
         deployments = [(row["deployment_id"], row["artifact_id"], row["intake_id"]) for row in self.tables["deployments"]]
-        self.assertEqual(deployments, [("CT-e2m", DIGEST, "IMG-abababababab"), ("CT-e2", DIGEST, "IMG-abababababab")])
+        # A desired-count update (e13) deploys no new task definition.
+        self.assertEqual(deployments, [("CT-e2m", DIGEST, "IMG-abababababab"), ("CT-e2", DIGEST, "IMG-abababababab"),
+                                       ("CT-e12", DIGEST, "IMG-abababababab")])
         [intake] = self.tables["intakes"]
         # The migration task is the first use, after the 04:06 gate.
         self.assertEqual((intake["supplier_id"], intake["first_used_at"], intake["inspected_at"]),

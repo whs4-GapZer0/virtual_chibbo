@@ -43,6 +43,9 @@ class Registers:
     cti: tuple[dict[str, str], ...]
     rules: tuple[dict[str, str], ...]
     tuning: tuple[dict[str, str], ...]
+    # Role-name patterns whose calls are workloads rather than changes
+    # (in addition to the IAM roles the Chibbo stacks define).
+    workload_roles: tuple[str, ...] = ()
 
     def asset_for_resource(self, logical_id: str, resource_type: str) -> str | None:
         """The asset owning a CloudFormation resource: logical ID first, then type."""
@@ -118,6 +121,9 @@ def load(root: str | Path) -> Registers:
     if (default_asset not in assets or not isinstance(workflows, dict)
             or not all(isinstance(k, str) and value in assets for k, value in workflows.items())):
         raise RegisterError("assets.json: default_asset·deploy_workflows는 등록된 자산 ID를 가리켜야 합니다.")
+    workload_roles = raw.get("workload_roles", [])
+    if not isinstance(workload_roles, list) or not all(isinstance(item, str) and item.strip() for item in workload_roles):
+        raise RegisterError("assets.json: workload_roles는 역할 이름 패턴 목록이어야 합니다.")
 
     suppliers_path = base / "suppliers.json"
     suppliers = _rows(suppliers_path, _load(suppliers_path, "chibbo.suppliers/v1"), "suppliers",
@@ -143,7 +149,8 @@ def load(root: str | Path) -> Registers:
                   ("rule_id", "criticality", "business_impact", "vulnerability_level", "threat_level"))
     tuning = _rows(tvm / "tuning.json", _load(tvm / "tuning.json", "chibbo.tuning/v1"), "reviews",
                    ("event_id", "rule_id", "reviewed_at", "disposition", "rule_version", "evidence_ref"), ("event_id",))
-    return Registers(base, assets, default_asset, dict(workflows), suppliers, approvers, cti, rules, tuning)
+    return Registers(base, assets, default_asset, dict(workflows), suppliers, approvers, cti, rules, tuning,
+                     tuple(item.strip() for item in workload_roles))
 
 
 def main(argv: list[str] | None = None) -> int:
