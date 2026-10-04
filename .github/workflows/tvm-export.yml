@@ -2,7 +2,8 @@ name: tvm-export
 # Daily export of Chibbo's real change, intake and analysis records for
 # GapZer0 GRC TVM-C-06/E-03/E-04 (scripts/chibbo_evidence/tvm_export.py).
 # GRC reads the newest workbook under exports/tvm/chibbo/ with its own role;
-# a day without a successful run shows in GRC as stale coverage.
+# a day without a successful run shows in GRC as stale coverage.  The
+# workbook names AWS principals, so it is never kept as a (public) run artifact.
 on:
   schedule:
     - cron: "40 15 * * *" # 00:40 Asia/Seoul, after the KST day the coverage must include
@@ -26,9 +27,12 @@ jobs:
     # the environment to main so another branch cannot forge an export.
     environment: chibbo-dev-evidence
     runs-on: ubuntu-24.04
-    timeout-minutes: 50
+    timeout-minutes: 110
     env:
       AWS_REGION: ap-northeast-2
+      # CloudTrail LookupEvents allows about 2 calls a second per region.
+      AWS_RETRY_MODE: adaptive
+      AWS_MAX_ATTEMPTS: "10"
       # GapZer0 GRC instance ID of the recruitment platform system.
       GRC_PLATFORM_INSTANCE_ID: "038485873836"
       EVIDENCE_BUCKET: gapzero-evidence-992764023398-ap-northeast-2
@@ -41,6 +45,7 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::992764023398:role/chibbo-dev-tvm-exporter
           role-session-name: tvm-export-${{ github.run_id }}
+          role-duration-seconds: 7200
           aws-region: ${{ env.AWS_REGION }}
       - name: Export TVM records to the GapZer0 evidence bucket
         env:
@@ -51,9 +56,3 @@ jobs:
             --instance-id "$GRC_PLATFORM_INSTANCE_ID" \
             --out "$RUNNER_TEMP/chibbo-tvm.xlsx" \
             --upload-bucket "$EVIDENCE_BUCKET"
-      - name: Keep the exported workbook with the run
-        uses: actions/upload-artifact@v4
-        with:
-          name: chibbo-tvm-export
-          path: ${{ runner.temp }}/chibbo-tvm.xlsx
-          retention-days: 14

@@ -8,15 +8,18 @@ GRC evidence bucket with Chibbo's own OIDC role; GRC only reads it.
 
 Sources (see governance/README.md):
 
-* changes      merged pull requests (template + approving review by another
-               person) and approved ``change`` issues for console changes
-* executions   deployment runs that CloudTrail shows actually changed AWS,
-               plus write events by people outside the pipeline
+* changes      merged pull requests (template + approving review by a listed
+               approver other than the author) and approved ``change`` issues
+* executions   per pull request, the first deployment run whose commit
+               contains it and that CloudTrail shows changed the declared
+               asset; repository-only (A-08) pull requests execute at merge;
+               write events on Chibbo resources by anyone but the pipeline
+               and declared workloads
 * exceptions   ``risk-acceptance`` issues approved by a listed approver
 * deployments  ECS RunTask/CreateService/UpdateService of the platform image
                (the migration task is the image's first use in a release)
-* intakes      one per deployed image digest; verifications from the
-               deploy job's ``tvm-e-03-verification`` artifact
+* intakes      one per deployed image digest; verifications from main-branch
+               deploy runs' ``tvm-e-03-verification`` artifact
 * registers    governance/ suppliers, assets, CTI, priority rules, tuning
 
 E-04 events are not collected yet (no SIEM covers Chibbo), so the export
@@ -29,6 +32,7 @@ import argparse
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
+from fnmatch import fnmatchcase
 import json
 import os
 from pathlib import Path
@@ -63,18 +67,25 @@ COLLECTED = [tab for tab in DATA_TABS if tab != "events"]
 WINDOW = timedelta(days=90)
 # CloudTrail event history usually lags by a few minutes; do not claim the last 15.
 TRAIL_LAG = timedelta(minutes=15)
-CHANGE_EVENT = re.compile(
-    r"^(Create|Update|Put|Delete|Modify|Attach|Detach|Associate|Disassociate|Authorize|Revoke|Register|"
-    r"Deregister|Add|Remove|Set|Enable|Disable|Start|Stop|Reboot|Run|Replace|Reset|Restore|Change|Import|"
-    r"Upload|Execute|Tag|Untag|Rotate|Schedule|Cancel)")
-# Sessions, queries and log delivery are not changes to the system.
-NOT_A_CHANGE = {"StartSession", "ResumeSession", "StartQuery", "CreateLogStream", "PutLogEvents",
-                "StartLiveTail", "CreateSession", "CreateToken", "AssumeRole"}
-# A release first runs its image as the one-off migration task, then as the service.
+# LookupEvents already returns only ReadOnly=false events.  These are writes
+# that change nothing about the system: sessions, credentials, log delivery
+# and agent heartbeats.
+NOT_A_CHANGE = {
+    "AssumeRole", "AssumeRoleWithSAML", "AssumeRoleWithWebIdentity", "GetFederationToken", "GetSessionToken",
+    "ConsoleLogin", "SwitchRole", "GetSigninToken", "CheckMfa", "CredentialChallenge", "CredentialVerification",
+    "CreateToken", "CreateSession", "StartSession", "ResumeSession", "TerminateSession", "StartLiveTail",
+    "StartQuery", "StopQuery", "CreateLogStream", "PutLogEvents", "UpdateInstanceInformation",
+    "PutComplianceItems", "PutInventory",
+}
+# Pipeline mechanics: the resource changes a change set makes are logged
+# separately under the CloudFormation execution role.
+PIPELINE_MECHANICS = {"cloudformation.amazonaws.com"}
 IMAGE_USE_EVENTS = {"RunTask", "CreateService", "UpdateService"}
+REPOSITORY_ASSET = "A-08"
 VERIFICATION_ARTIFACT = "tvm-e-03-verification"
 VERIFICATION_SCHEMA = "chibbo.image-verification/v1"
 IN_HOUSE_SUPPLIER = "SUP-CHIBBO-CI"
+DEPLOY_WORKFLOW = ".github/workflows/deploy.yml"
 
 
 def kst(value: datetime | None) -> str:
@@ -115,7 +126,8 @@ class Raw:
     platform_repository: str
     pulls: list[dict[str, Any]] = field(default_factory=list)
     runs: list[dict[str, Any]] = field(default_factory=list)
-    run_pulls: dict[str, int | None] = field(default_factory=dict)
+    # head commit of a run -> every commit reachable from it since the window start
+    run_ancestors: dict[str, set[str]] = field(default_factory=dict)
     change_issues: list[dict[str, Any]] = field(default_factory=list)
     risk_issues: list[dict[str, Any]] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
@@ -126,6 +138,13 @@ class Raw:
     @property
     def pipeline_roles(self) -> set[str]:
         return {f"chibbo-{self.environment}-github-deploy", f"chibbo-{self.environment}-cloudformation-execution"}
+
+    def workload_roles(self, registers: Registers) -> tuple[set[str], tuple[str, ...]]:
+        """Roles whose calls are workloads, not changes: every IAM role the Chibbo
+        stacks define except the pipeline's, plus the register's patterns."""
+
+        roles = {item["physical_id"] for item in self.stack_resources if item["type"] == "AWS::IAM::Role"}
+        return roles - self.pipeline_roles, registers.workload_roles
 
 
 # -- CloudTrail -------------------------------------------------------------
@@ -139,56 +158,84 @@ class Change:
     asset_id: str
 
 
-def _principal(event: dict[str, Any]) -> tuple[str, str, str]:
-    """(identity type, role session issuer, principal ARN) of a write event."""
+def category(event: dict[str, Any], pipeline_roles: set[str], workload_roles: set[str], patterns: tuple[str, ...]) -> str | None:
+    """pipeline, human, or None for calls that changed nothing or are workloads.
 
+    Anything not proven to be the pipeline or a declared workload counts as a
+    person, so an unexpected identity type is reported rather than dropped.
+    """
+
+    if event.get("errorCode") or event.get("readOnly") is True or event.get("eventName") in NOT_A_CHANGE:
+        return None
     identity = event.get("userIdentity") or {}
     kind = identity.get("type", "")
+    context = identity.get("sessionContext") or {}
+    issuer = (context.get("sessionIssuer") or {}).get("userName", "")
+    if kind == "AssumedRole" and issuer in pipeline_roles:
+        return "pipeline"
+    if kind == "AWSService" or identity.get("invokedBy") or context.get("ec2RoleDelivery"):
+        return None  # a service acting on its own behalf, or an instance profile
+    if kind == "AssumedRole" and (issuer in workload_roles or any(fnmatchcase(issuer, pattern) for pattern in patterns)):
+        return None
+    return "human"
+
+
+def _principal(event: dict[str, Any]) -> str:
+    identity = event.get("userIdentity") or {}
     issuer = ((identity.get("sessionContext") or {}).get("sessionIssuer") or {}).get("userName", "")
-    arn = identity.get("arn") or issuer or kind
-    return kind, issuer, arn
+    return identity.get("arn") or issuer or identity.get("type", "")
 
 
 def classify(raw: Raw, registers: Registers) -> list[Change]:
     resources = sorted((item for item in raw.stack_resources if len(item["physical_id"]) >= 6),
                        key=lambda item: -len(item["physical_id"]))
+    stacks = {item["stack"] for item in raw.stack_resources}
+    workloads, patterns = raw.workload_roles(registers)
     changes = []
     for event in raw.events:
-        name = event.get("eventName", "")
-        if not CHANGE_EVENT.match(name) or name in NOT_A_CHANGE or event.get("readOnly") is True:
+        kind = category(event, raw.pipeline_roles, workloads, patterns)
+        at = parse_time(event.get("eventTime"))
+        if kind is None or at is None:
             continue
-        kind, issuer, arn = _principal(event)
-        if kind == "AssumedRole" and issuer in raw.pipeline_roles:
-            category = "pipeline"
-        elif kind in {"IAMUser", "Root", "IdentityCenterUser"} or (kind == "AssumedRole" and issuer.startswith("AWSReservedSSO_")):
-            category = "human"
-        else:
-            continue  # services and workloads (ECS, SSM agent, scanners) are not changes by people or the pipeline
         text = json.dumps({key: event.get(key) for key in ("requestParameters", "responseElements", "resources")},
                           ensure_ascii=False, default=str)
         owned = next((item for item in resources if item["physical_id"] in text), None)
-        if category == "human" and owned is None and "chibbo" not in text.lower():
+        if kind == "human" and owned is None and not any(stack in text for stack in stacks):
             continue  # another workload in the shared account
-        at = parse_time(event.get("eventTime"))
-        if at is None:
-            continue
         asset = (registers.asset_for_resource(owned["logical_id"], owned["type"]) if owned else None) \
             or registers.asset_for_event_source(event.get("eventSource", ""))
-        changes.append(Change(event, at, arn, category, asset))
+        changes.append(Change(event, at, _principal(event), kind, asset))
     return sorted(changes, key=lambda item: item.at)
 
 
 def _task_definition(event: dict[str, Any]) -> str:
+    """The exact task-definition ARN an ECS call ran or deployed, if any.
+
+    The response carries the resolved revision; a family-only request would
+    otherwise resolve to whatever revision is current at export time.  An
+    UpdateService that does not name a task definition deploys no new image.
+    """
+
     request = event.get("requestParameters") or {}
     response = event.get("responseElements") or {}
+    if event.get("eventName") == "UpdateService" and not request.get("taskDefinition"):
+        return ""
     tasks = response.get("tasks") if isinstance(response.get("tasks"), list) else []
-    return (request.get("taskDefinition") or (response.get("service") or {}).get("taskDefinition")
-            or next((task.get("taskDefinitionArn") for task in tasks if isinstance(task, dict)), "") or "")
+    resolved = (response.get("service") or {}).get("taskDefinition") if isinstance(response.get("service"), dict) else None
+    resolved = resolved or next((task.get("taskDefinitionArn") for task in tasks if isinstance(task, dict)), None)
+    return resolved or request.get("taskDefinition") or ""
+
+
+def is_chibbo_task_definition(reference: str) -> bool:
+    family = reference.rsplit("task-definition/", 1)[-1]
+    return family.startswith("Chibbo")
 
 
 # -- builders ----------------------------------------------------------------
 
-def _approved_review(pull: dict[str, Any]) -> dict[str, Any] | None:
+def _approved_review(pull: dict[str, Any], approvers: frozenset[str]) -> dict[str, Any] | None:
+    """The latest approval of the merged commit by a listed approver other than the author."""
+
     author = ((pull.get("user") or {}).get("login") or "").lower()
     merged = parse_time(pull.get("merged_at"))
     head = (pull.get("head") or {}).get("sha")
@@ -196,9 +243,8 @@ def _approved_review(pull: dict[str, Any]) -> dict[str, Any] | None:
     for review in pull.get("reviews") or []:
         login = ((review.get("user") or {}).get("login") or "").lower()
         at = parse_time(review.get("submitted_at"))
-        # An approval of the merged code by someone other than the author.
-        if (review.get("state") == "APPROVED" and login and login != author and at and merged and at <= merged
-                and review.get("commit_id") == head):
+        if (review.get("state") == "APPROVED" and login in approvers and login != author
+                and at and merged and at <= merged and review.get("commit_id") == head):
             if found is None or at > found["_at"]:
                 found = {**review, "_at": at, "_login": login}
     return found
@@ -219,127 +265,154 @@ def _approval_label(issue: dict[str, Any], label: str, approvers: frozenset[str]
     return None
 
 
+def _declared(pull: dict[str, Any]) -> str:
+    return forms.asset_id(forms.sections(pull.get("body")).get("대상 자산"))
+
+
 def build(raw: Raw, registers: Registers, *, instance_id: str, now: datetime, run_url: str,
           start: datetime | None = None) -> dict[str, list[dict[str, str]]]:
     start = start or now - WINDOW
     tables: dict[str, list[dict[str, str]]] = {tab: [] for tab in HEADERS}
     changes = classify(raw, registers)
-    pulls = {pull["number"]: pull for pull in raw.pulls}
+    pulls = sorted((pull for pull in raw.pulls if (parse_time(pull.get("merged_at")) or start) >= start),
+                   key=lambda item: item["number"])
 
-    # Pipeline executions: a deployment run that CloudTrail shows changed AWS.
+    # Pipeline executions.  A deploy run ships every pull request merged
+    # since the last run that executed it, so each pull request is executed by
+    # the first run whose commit contains it and whose CloudTrail writes touched
+    # its declared asset.  A re-run that executes no new pull request re-applies
+    # changes already executed; it is noted on those rows.
+    executed: dict[str, tuple[datetime, str]] = {}
+    rows_by_run: dict[str, list[dict[str, str]]] = {}
     claimed: set[int] = set()
-    first_execution: dict[str, tuple[datetime, str]] = {}
+    for pull in pulls:
+        if _declared(pull) == REPOSITORY_ASSET:
+            # A repository-only change takes effect when it is merged.
+            at = parse_time(pull.get("merged_at"))
+            executed[f"PR-{pull['number']}"] = (at, pull.get("html_url", ""))
+            tables["executions"].append({"execution_id": f"MERGE-PR{pull['number']}", "change_id": f"PR-{pull['number']}",
+                                         "asset_id": REPOSITORY_ASSET, "executed_at": kst(at), "source_ref": pull.get("html_url", "")})
     for run in sorted(raw.runs, key=lambda item: item.get("run_started_at") or ""):
         begin, finish = parse_time(run.get("run_started_at")), parse_time(run.get("updated_at"))
         if begin is None or finish is None:
             continue
-        mine = [change for change in changes if change.kind == "pipeline" and begin <= change.at <= finish + timedelta(minutes=2)]
-        if not mine:
-            continue
+        mine = [change for change in changes
+                if change.kind == "pipeline" and begin <= change.at <= finish + timedelta(minutes=2)]
         claimed.update(id(change) for change in mine)
-        touched = Counter(change.asset_id for change in mine)
-        number = raw.run_pulls.get(run.get("head_sha", ""))
-        declared = forms.asset_id(forms.sections((pulls.get(number) or {}).get("body")).get("대상 자산")) if number else ""
+        effective = [change for change in mine if change.event.get("eventSource") not in PIPELINE_MECHANICS]
+        if not effective:
+            continue  # nothing beyond change-set bookkeeping: the run changed no resource
+        touched = Counter(change.asset_id for change in effective)
         fallback = registers.deploy_workflows.get(run.get("path", ""), "")
-        asset = declared if declared in touched else fallback if fallback in touched else sorted(touched, key=lambda key: (-touched[key], key))[0]
-        change_id = f"PR-{number}" if number else ""
-        at = mine[0].at
-        if change_id and change_id not in first_execution:
-            first_execution[change_id] = (at, run.get("html_url", ""))
-        tables["executions"].append({"execution_id": f"RUN-{run['id']}", "change_id": change_id, "asset_id": asset,
-                                     "executed_at": kst(at), "source_ref": run.get("html_url", "")})
+        fallback = fallback if fallback in touched else sorted(touched, key=lambda key: (-touched[key], key))[0]
+        ancestors = raw.run_ancestors.get(run.get("head_sha", ""), set())
+        at = effective[0].at
+        url = run.get("html_url", "")
+        shipped = [pull for pull in pulls if pull.get("merge_commit_sha") in ancestors
+                   and f"PR-{pull['number']}" not in executed and (not _declared(pull) or _declared(pull) in touched)]
+        if not shipped:
+            for row in rows_by_run.get(run.get("head_sha", ""), []):
+                row["source_ref"] = one_line(f"{row['source_ref']} · 재실행 {url} {kst(at)}", 600)
+            continue
+        for pull in shipped:
+            change_id = f"PR-{pull['number']}"
+            executed[change_id] = (at, url)
+            row = {"execution_id": f"RUN-{run['id']}-PR{pull['number']}", "change_id": change_id,
+                   "asset_id": _declared(pull) or fallback, "executed_at": kst(at), "source_ref": url}
+            tables["executions"].append(row)
+            rows_by_run.setdefault(run.get("head_sha", ""), []).append(row)
 
-    # Out-of-band executions: people (or pipeline calls outside any run),
-    # one per principal, asset and KST day.
-    approved_changes = []
+    # Out-of-band executions.  Writes inside an approved change issue's window
+    # on its asset are that change's single execution; any other writes are
+    # grouped per principal, asset and KST day.
+    issues = []
     for issue in raw.change_issues:
         fields = forms.sections(issue.get("body"))
         approval = _approval_label(issue, "change-approved", registers.approvers["change"])
         window = (parse_kst_minute(forms.value(fields, "실행 예정 시작 (KST)")), parse_kst_minute(forms.value(fields, "실행 예정 종료 (KST)")))
-        approved_changes.append((issue, fields, approval, window))
-    groups: dict[tuple[str, str, str], list[Change]] = {}
+        issues.append((issue, fields, approval, window))
+    groups: dict[tuple[str, ...], list[Change]] = {}
     for change in changes:
-        if id(change) in claimed:
-            continue
-        groups.setdefault((change.principal, change.asset_id, change.at.astimezone(KST).date().isoformat()), []).append(change)
-    for (principal, asset, _day), items in sorted(groups.items(), key=lambda pair: pair[1][0].at):
+        if id(change) in claimed or (change.kind == "pipeline" and change.event.get("eventSource") in PIPELINE_MECHANICS):
+            continue  # a change set created or deleted outside a run changes no resource
+        match = next((f"CHG-{issue['number']}" for issue, fields, approval, (begin, finish) in issues
+                      if approval and begin and finish and begin <= change.at <= finish
+                      and forms.asset_id(fields.get("대상 자산")) == change.asset_id), None)
+        key = (match,) if match else (change.principal, change.asset_id, change.at.astimezone(KST).date().isoformat())
+        groups.setdefault(key, []).append(change)
+    for key, items in sorted(groups.items(), key=lambda pair: pair[1][0].at):
         first = items[0]
-        change_id = ""
-        for issue, fields, approval, (begin, finish) in approved_changes:
-            if (approval and begin and finish and begin <= first.at <= finish
-                    and forms.asset_id(fields.get("대상 자산")) == asset):
-                change_id = f"CHG-{issue['number']}"
-                break
-        if change_id and change_id not in first_execution:
-            first_execution[change_id] = (first.at, "")
+        change_id = key[0] if len(key) == 1 else ""
+        if change_id:
+            executed[change_id] = (first.at, "")
         names = ", ".join(sorted({item.event.get("eventName", "") for item in items}))
+        principals = ", ".join(sorted({item.principal for item in items}))
         tables["executions"].append({
-            "execution_id": f"CT-{first.event.get('eventID', '')}", "change_id": change_id, "asset_id": asset,
+            "execution_id": f"CT-{first.event.get('eventID', '')}", "change_id": change_id, "asset_id": first.asset_id,
             "executed_at": kst(first.at),
-            "source_ref": one_line(f"CloudTrail {first.event.get('_region', '')} {first.event.get('eventID', '')} · {principal} · {len(items)}건: {names}"),
+            "source_ref": one_line(f"CloudTrail {first.event.get('_region', '')} {first.event.get('eventID', '')} · {principals} · {len(items)}건: {names}"),
         })
 
     # Change records: merged pull requests and console-change issues.
-    for pull in sorted(raw.pulls, key=lambda item: item["number"]):
+    for pull in pulls:
         fields = forms.sections(pull.get("body"))
         risk = forms.value(fields, "위험 평가")
-        review = _approved_review(pull)
-        executed = first_execution.get(f"PR-{pull['number']}")
+        review = _approved_review(pull, registers.approvers["change"])
+        done = executed.get(f"PR-{pull['number']}")
         tables["changes"].append({
-            "change_id": f"PR-{pull['number']}", "asset_id": forms.asset_id(fields.get("대상 자산")),
+            "change_id": f"PR-{pull['number']}", "asset_id": _declared(pull),
             "risk_ref": f"{pull.get('html_url', '')}#위험-평가" if risk else "",
             "assessed_at": kst(parse_time(pull.get("created_at"))) if risk else "",
             "approver": review["_login"] if review else "", "approved_at": kst(review["_at"]) if review else "",
-            "executed_at": kst(executed[0]) if executed else "", "result_ref": executed[1] if executed else "",
+            "executed_at": kst(done[0]) if done else "", "result_ref": done[1] if done else "",
         })
-    for issue, fields, approval, _window in approved_changes:
-        executed = first_execution.get(f"CHG-{issue['number']}")
+    for issue, fields, approval, _window in issues:
+        done = executed.get(f"CHG-{issue['number']}")
         risk = forms.value(fields, "위험 평가")
         tables["changes"].append({
             "change_id": f"CHG-{issue['number']}", "asset_id": forms.asset_id(fields.get("대상 자산")),
             "risk_ref": f"{issue.get('html_url', '')}#위험-평가" if risk else "",
             "assessed_at": kst(parse_time(issue.get("created_at"))) if risk else "",
             "approver": approval[0] if approval else "", "approved_at": kst(approval[1]) if approval else "",
-            "executed_at": kst(executed[0]) if executed else "", "result_ref": issue.get("html_url", "") if executed else "",
+            "executed_at": kst(done[0]) if done else "", "result_ref": issue.get("html_url", "") if done else "",
         })
 
-    # Exceptions: approved risk acceptances, and open requests still undecided.
+    # Exceptions: approved risk acceptances only.  An undecided or rejected
+    # request is not an exception in effect.
     for issue in sorted(raw.risk_issues, key=lambda item: item["number"]):
         fields = forms.sections(issue.get("body"))
         approval = _approval_label(issue, "risk-accepted", registers.approvers["risk_acceptance"])
+        if not approval:
+            continue
         closed = issue.get("state") == "closed"
-        if closed and not approval:
-            continue  # rejected or withdrawn: never an exception
         risk = forms.value(fields, "수용하려는 위험과 근거")
         tables["exceptions"].append({
             "exception_id": f"RA-{issue['number']}", "asset_id": forms.asset_id(fields.get("대상 자산")),
             "risk_ref": f"{issue.get('html_url', '')}#수용하려는-위험과-근거" if risk else "",
-            "approver": approval[0] if approval else "", "approved_at": kst(approval[1]) if approval else "",
+            "approver": approval[0], "approved_at": kst(approval[1]),
             "expires_at": kst(end_of_kst_day(forms.value(fields, "만료일"))),
             "compensating_control": one_line(forms.value(fields, "보완 통제")),
             "review_at": kst(end_of_kst_day(forms.value(fields, "재검토일"))),
-            "status": "closed" if closed else "active" if approval else "pending_approval",
+            "status": "closed" if closed else "active",
             "closure_ref": f"{issue.get('html_url', '')} ({issue.get('state_reason') or 'closed'} {kst(parse_time(issue.get('closed_at')))})" if closed else "",
         })
 
-    # Deployments and intakes of the platform image.
+    # Deployments and intakes of the platform image.  The first use observed in
+    # the CloudTrail window stands in for the image's first use.
     marker = f"/{raw.platform_repository}@sha256:"
     first_use: dict[str, datetime] = {}
-    for event in sorted(raw.events, key=lambda item: item.get("eventTime", "")):
+    for change in changes:
+        event = change.event
         if event.get("eventSource") != "ecs.amazonaws.com" or event.get("eventName") not in IMAGE_USE_EVENTS:
             continue
-        if event.get("errorCode"):
-            continue
-        reference = _task_definition(event)
-        digests = [image.split("@", 1)[1] for image in raw.task_images.get(reference or "", []) if marker in image]
-        at = parse_time(event.get("eventTime"))
-        if not digests or at is None:
+        digests = [image.split("@", 1)[1] for image in raw.task_images.get(_task_definition(event), []) if marker in image]
+        if not digests:
             continue
         digest = digests[0]
-        first_use[digest] = min(first_use.get(digest, at), at)
+        first_use[digest] = min(first_use.get(digest, change.at), change.at)
         tables["deployments"].append({
             "deployment_id": f"CT-{event.get('eventID', '')}", "intake_id": f"IMG-{digest[7:19]}", "artifact_id": digest,
-            "deployed_at": kst(at), "source_ref": f"CloudTrail {event.get('_region', '')} {event.get('eventName')} {event.get('eventID', '')}",
+            "deployed_at": kst(change.at), "source_ref": f"CloudTrail {event.get('_region', '')} {event.get('eventName')} {event.get('eventID', '')}",
         })
     verified: dict[str, dict[str, Any]] = {}
     for report in raw.verifications:
@@ -352,7 +425,7 @@ def build(raw: Raw, registers: Registers, *, instance_id: str, now: datetime, ru
     for digest, used in sorted(first_use.items(), key=lambda pair: pair[1]):
         report = verified.get(digest)
         tables["intakes"].append({
-            "intake_id": f"IMG-{digest[7:19]}", "kind": "SW", "asset_id": registers.deploy_workflows.get(".github/workflows/deploy.yml", "A-04"),
+            "intake_id": f"IMG-{digest[7:19]}", "kind": "SW", "asset_id": registers.deploy_workflows.get(DEPLOY_WORKFLOW, "A-04"),
             "supplier_id": IN_HOUSE_SUPPLIER, "artifact_id": digest,
             "inspected_at": kst(parse_time(report.get("inspected_at"))) if report else "",
             "first_used_at": kst(used), "inspection_ref": f"{report.get('report_ref', '')}#deploy-gate" if report else "",
@@ -376,16 +449,17 @@ def build(raw: Raw, registers: Registers, *, instance_id: str, now: datetime, ru
 
     # Coverage: what this run read completely, never the events it cannot see.
     sources = {
-        "changes": "GitHub 병합 PR·리뷰, change 이슈", "executions": "Actions 배포 실행 + CloudTrail 쓰기 이벤트(ap-northeast-2, us-east-1)",
-        "exceptions": "risk-acceptance 이슈", "intakes": "CloudTrail ECS 배포 + 배포 검증 산출물", "suppliers": "governance/suppliers.json",
-        "verifications": f"Actions 산출물 {VERIFICATION_ARTIFACT}", "hardware": "없음(클라우드 전용)",
-        "deployments": "CloudTrail ECS RunTask·CreateService·UpdateService", "cti": "governance/tvm/cti.json",
+        "changes": "GitHub 병합 PR·리뷰, change 이슈",
+        "executions": "Actions 배포 실행 + CloudTrail 쓰기 이벤트(ap-northeast-2, us-east-1, 파이프라인·선언된 워크로드 외 전체)",
+        "exceptions": "risk-acceptance 이슈", "intakes": "CloudTrail ECS 배포 + main 배포 검증 산출물", "suppliers": "governance/suppliers.json",
+        "verifications": f"main 배포 실행의 Actions 산출물 {VERIFICATION_ARTIFACT}", "hardware": "없음(클라우드 전용)",
+        "deployments": "CloudTrail ECS RunTask·CreateService·UpdateService(작업 정의 지정)", "cti": "governance/tvm/cti.json",
         "assets": "governance/assets.json", "rules": "governance/tvm/rules.json", "tuning": "governance/tvm/tuning.json",
     }
     end = now - TRAIL_LAG
-    tables["coverage"] = [{"source": role, "period_start": kst(start.replace(microsecond=0) + timedelta(seconds=1)), "period_end": kst(end.replace(microsecond=0)),
-                           "collected_at": kst(now.replace(microsecond=0)), "status": "complete",
-                           "source_ref": f"{run_url} · {sources[role]}"} for role in COLLECTED]
+    tables["coverage"] = [{"source": role, "period_start": kst(start.replace(microsecond=0) + timedelta(seconds=1)),
+                           "period_end": kst(end.replace(microsecond=0)), "collected_at": kst(now.replace(microsecond=0)),
+                           "status": "complete", "source_ref": f"{run_url} · {sources[role]}"} for role in COLLECTED]
     for rows in tables.values():
         for row in rows:
             row["instance_id"] = instance_id
@@ -410,23 +484,27 @@ def fetch(registers: Registers, *, repository: str, token: str, environment: str
     github = GitHub(token, repository)
     raw = Raw(repository, environment, f"chibbo-platform-{environment}")
     raw.pulls = github.merged_pulls()
-    since = start.astimezone(UTC).date().isoformat()
+    since = start.astimezone(UTC)
     for path in registers.deploy_workflows:
-        raw.runs.extend(github.workflow_runs(Path(path).name, since))
+        raw.runs.extend(github.workflow_runs(Path(path).name, since.date().isoformat()))
     for run in raw.runs:
         sha = run.get("head_sha", "")
-        if sha and sha not in raw.run_pulls:
-            raw.run_pulls[sha] = github.pull_for_commit(sha)
-        if run.get("path") == ".github/workflows/deploy.yml":
+        if sha and sha not in raw.run_ancestors:
+            raw.run_ancestors[sha] = github.ancestors(sha, since)
+        # Only reports from main-branch release runs; a branch could dispatch
+        # an altered workflow that uploads an arbitrary "passed" report.
+        if run.get("path") == DEPLOY_WORKFLOW and run.get("head_branch") == "main" and run.get("event") == "workflow_dispatch":
             raw.verifications.extend(github.run_artifact_json(run["id"], VERIFICATION_ARTIFACT))
     raw.change_issues = github.issues("change")
     raw.risk_issues = github.issues("risk-acceptance")
-    for trail_region in dict.fromkeys((region, "us-east-1")):
-        raw.events.extend(aws.write_events(trail_region, start, now))
     raw.stack_resources = aws.stack_resources(region, "Chibbo")
+    workloads, patterns = raw.workload_roles(registers)
+    keep = lambda event: category(event, raw.pipeline_roles, workloads, patterns) is not None  # noqa: E731
+    for trail_region in dict.fromkeys((region, "us-east-1")):
+        raw.events.extend(aws.write_events(trail_region, start, now, keep=keep))
     references = {_task_definition(event) for event in raw.events
                   if event.get("eventSource") == "ecs.amazonaws.com" and event.get("eventName") in IMAGE_USE_EVENTS}
-    for reference in sorted(item for item in references if item):
+    for reference in sorted(item for item in references if item and is_chibbo_task_definition(item)):
         raw.task_images[reference] = aws.task_definition_images(region, reference)
     return raw
 

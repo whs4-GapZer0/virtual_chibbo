@@ -157,7 +157,7 @@ export class ChibboBootstrapStack extends Stack {
     this.tvmExporterRole = new iam.Role(this, "TvmExporterRole", {
       roleName: `chibbo-${props.environmentName}-tvm-exporter`,
       description: "Exports Chibbo's real TVM change, intake and analysis records to the GapZer0 evidence bucket once a day.",
-      maxSessionDuration: Duration.hours(1),
+      maxSessionDuration: Duration.hours(2),
       assumedBy: new iam.FederatedPrincipal(provider.openIdConnectProviderArn, {
         StringEquals: {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",

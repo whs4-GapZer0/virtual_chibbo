@@ -1,7 +1,8 @@
 {
   "schema": "chibbo.assets/v1",
-  "_설명": "치뽀 채용지원 플랫폼의 자산 대장. PR 양식의 '대상 자산', 이슈 양식의 자산 목록, TVM 내보내기의 asset_id가 이 ID를 쓴다. 변경은 PR 리뷰로 승인한다. matchers는 CloudTrail 이벤트를 자산에 연결하는 규칙이다: CloudFormation 논리 ID(logical_ids) → 리소스 형식(types) → 이벤트 소스(event_sources) 순서로 맞추고, 맞는 것이 없으면 default_asset이다. vulnerability_level·vulnerability_ref는 최근 점검 결과를 사람이 옮겨 적고, 평가하지 않은 자산은 비워 둔다.",
+  "_설명": "치뽀 채용지원 플랫폼의 자산 대장. PR 양식의 '대상 자산', 이슈 양식의 자산 목록, TVM 내보내기의 asset_id가 이 ID를 쓴다. 변경은 PR 리뷰로 승인한다. matchers는 CloudTrail 이벤트를 자산에 연결하는 규칙이다: CloudFormation 논리 ID(logical_ids) → 리소스 형식(types) → 이벤트 소스(event_sources) 순서로 맞추고, 맞는 것이 없으면 default_asset이다. 치뽀 스택이 정의한 IAM 역할(파이프라인 역할 제외)과 workload_roles 패턴의 호출은 사람의 변경이 아니라 워크로드로 본다. vulnerability_level·vulnerability_ref는 최근 점검 결과를 사람이 옮겨 적고, 평가하지 않은 자산은 비워 둔다.",
   "default_asset": "A-01",
+  "workload_roles": ["AWSServiceRole*"],
   "deploy_workflows": {
     ".github/workflows/deploy.yml": "A-04",
     ".github/workflows/deploy-prowler-scanner.yml": "A-14"
