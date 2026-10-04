@@ -1,0 +1,22 @@
+name: pr-governance
+# The merged pull request is Chibbo's change record for GRC TVM-C-06. This
+# check keeps the target asset, risk assessment and rollback plan from being
+# merged empty; branch protection must list it as a required check.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+permissions:
+  contents: read
+jobs:
+  change-record:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Check the change record sections
+        env:
+          # Passed through the environment, never interpolated into the script.
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PYTHONPATH: scripts
+        run: python -m chibbo_evidence.pr_check

@@ -1,0 +1,5 @@
+{
+  "schema": "chibbo.priority-rules/v1",
+  "_설명": "승인된 경보 우선순위 매트릭스. (rule_id, criticality, business_impact, vulnerability_level, threat_level)마다 한 행. 항목: priority, response_level, version, rule_ref, approved_by, approved_at.",
+  "rules": []
+}

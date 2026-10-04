@@ -1,0 +1,26 @@
+{
+  "schema": "chibbo.suppliers/v1",
+  "_설명": "도입 산출물의 공급자 대장. TVM-E-03 intakes의 supplier_id가 이 ID를 쓴다. status는 approved 또는 suspended. 추가·변경은 PR 리뷰로 승인한다.",
+  "suppliers": [
+    {
+      "supplier_id": "SUP-CHIBBO-CI", "status": "approved",
+      "name": "치뽀 CI 빌드 (deploy-dev 워크플로가 만든 플랫폼 이미지)",
+      "source_ref": "https://github.com/whs4-GapZer0/virtual_chibbo/blob/main/.github/workflows/deploy.yml"
+    },
+    {
+      "supplier_id": "SUP-DOCKER-OFFICIAL-NODE", "status": "approved",
+      "name": "Docker Official Image node (플랫폼 이미지의 베이스)",
+      "source_ref": "https://hub.docker.com/_/node"
+    },
+    {
+      "supplier_id": "SUP-NPM", "status": "approved",
+      "name": "npm 레지스트리 (pnpm-lock.yaml의 sha512 무결성으로 설치)",
+      "source_ref": "https://registry.npmjs.org"
+    },
+    {
+      "supplier_id": "SUP-AWS", "status": "approved",
+      "name": "Amazon Web Services (관리형 서비스·AL2023 AMI)",
+      "source_ref": "https://aws.amazon.com/agreement/"
+    }
+  ]
+}

@@ -1,0 +1,100 @@
+{
+  "schema": "chibbo.assets/v1",
+  "_설명": "치뽀 채용지원 플랫폼의 자산 대장. PR 양식의 '대상 자산', 이슈 양식의 자산 목록, TVM 내보내기의 asset_id가 이 ID를 쓴다. 변경은 PR 리뷰로 승인한다. matchers는 CloudTrail 이벤트를 자산에 연결하는 규칙이다: CloudFormation 논리 ID(logical_ids) → 리소스 형식(types) → 이벤트 소스(event_sources) 순서로 맞추고, 맞는 것이 없으면 default_asset이다. vulnerability_level·vulnerability_ref는 최근 점검 결과를 사람이 옮겨 적고, 평가하지 않은 자산은 비워 둔다.",
+  "default_asset": "A-01",
+  "deploy_workflows": {
+    ".github/workflows/deploy.yml": "A-04",
+    ".github/workflows/deploy-prowler-scanner.yml": "A-14"
+  },
+  "assets": [
+    {
+      "asset_id": "A-01", "name": "AWS 계정 관리 평면 (IAM·KMS·CloudTrail·Config·CloudFormation)",
+      "criticality": "high", "business_impact": "high", "vulnerability_level": "", "vulnerability_ref": "",
+      "context_ref": "계정 992764023398 ap-northeast-2. 모든 치뽀 리소스의 권한·암호화·감사 설정",
+      "matchers": {
+        "logical_ids": [],
+        "types": ["AWS::IAM::*", "AWS::KMS::*", "AWS::Config::*", "AWS::AccessAnalyzer::*", "AWS::SecretsManager::*", "AWS::Budgets::*", "AWS::SSM::*"],
+        "event_sources": ["iam.amazonaws.com", "kms.amazonaws.com", "config.amazonaws.com", "cloudformation.amazonaws.com", "secretsmanager.amazonaws.com", "access-analyzer.amazonaws.com", "budgets.amazonaws.com", "sts.amazonaws.com"]
+      }
+    },
+    {
+      "asset_id": "A-02", "name": "VPC chibbo 네트워크 (10.84.0.0/16, 서브넷·보안 그룹·NAT·흐름 로그)",
+      "criticality": "high", "business_impact": "high", "vulnerability_level": "", "vulnerability_ref": "",
+      "context_ref": "ChibboFoundationDev Vpc, 보안 그룹 App·LoadBalancer·Database",
+      "matchers": {
+        "logical_ids": ["FlowLogs*"],
+        "types": ["AWS::EC2::VPC*", "AWS::EC2::Subnet*", "AWS::EC2::SecurityGroup*", "AWS::EC2::Route*", "AWS::EC2::NatGateway", "AWS::EC2::InternetGateway", "AWS::EC2::EIP", "AWS::EC2::FlowLog"],
+        "event_sources": ["ec2.amazonaws.com"]
+      }
+    },
+    {
+      "asset_id": "A-03", "name": "ALB 공개 HTTPS 진입점",
+      "criticality": "high", "business_impact": "high", "vulnerability_level": "medium",
+      "vulnerability_ref": "Prowler INF-E-01 2026-10-04: elbv2_insecure_ssl_ciphers 실패 (HTTPS listener SSL 정책)",
+      "context_ref": "ChibboApplicationDev Alb, ACM 인증서",
+      "matchers": {
+        "logical_ids": [],
+        "types": ["AWS::ElasticLoadBalancingV2::*", "AWS::CertificateManager::*"],
+        "event_sources": ["elasticloadbalancing.amazonaws.com", "acm.amazonaws.com"]
+      }
+    },
+    {
+      "asset_id": "A-04", "name": "채용지원 플랫폼 애플리케이션 (ECS Fargate 서비스·ECR 이미지)",
+      "criticality": "high", "business_impact": "high", "vulnerability_level": "", "vulnerability_ref": "",
+      "context_ref": "ECR chibbo-platform-dev, ChibboApplicationDev Service·Task, ChibboMigratorDev",
+      "matchers": {
+        "logical_ids": ["AppLogs*"],
+        "types": ["AWS::ECS::*", "AWS::ECR::*"],
+        "event_sources": ["ecs.amazonaws.com", "ecr.amazonaws.com"]
+      }
+    },
+    {
+      "asset_id": "A-05", "name": "RDS PostgreSQL (지원자·고객사 데이터)",
+      "criticality": "high", "business_impact": "high", "vulnerability_level": "", "vulnerability_ref": "",
+      "context_ref": "ChibboFoundationDev Postgres, 저장 암호화·백업 7일",
+      "matchers": {
+        "logical_ids": [],
+        "types": ["AWS::RDS::*"],
+        "event_sources": ["rds.amazonaws.com"]
+      }
+    },
+    {
+      "asset_id": "A-06", "name": "S3 이력서 버킷",
+      "criticality": "high", "business_impact": "high", "vulnerability_level": "low",
+      "vulnerability_ref": "Prowler INF-C-01 2026-10-04: 공개 차단·기본 암호화·TLS 전용 정책 통과",
+      "context_ref": "ChibboFoundationDev ResumeBucket·ResumeKey (SSE-KMS, 버전 관리)",
+      "matchers": {
+        "logical_ids": ["ResumeBucket*", "ResumeKey*"],
+        "types": [],
+        "event_sources": []
+      }
+    },
+    {
+      "asset_id": "A-07", "name": "S3 감사·구성 이력 버킷 (CloudTrail·Config·감사 로그)",
+      "criticality": "medium", "business_impact": "medium", "vulnerability_level": "low",
+      "vulnerability_ref": "Prowler INF-C-01 2026-10-04: 감사 버킷 공개 차단·기본 암호화·TLS 전용 정책 통과",
+      "context_ref": "ChibboFoundationDev AuditBucket·AuditKey·ConfigHistoryBucket·ResumeDataTrail·AuditLogs",
+      "matchers": {
+        "logical_ids": ["AuditBucket*", "AuditKey*", "ConfigHistoryBucket*", "ResumeDataTrail*", "AuditLogs*"],
+        "types": ["AWS::CloudTrail::*"],
+        "event_sources": ["cloudtrail.amazonaws.com"]
+      }
+    },
+    {
+      "asset_id": "A-08", "name": "GitHub 저장소 virtual_chibbo (main 보호 규칙·워크플로)",
+      "criticality": "medium", "business_impact": "medium", "vulnerability_level": "", "vulnerability_ref": "",
+      "context_ref": "https://github.com/whs4-GapZer0/virtual_chibbo",
+      "matchers": {"logical_ids": [], "types": [], "event_sources": []}
+    },
+    {
+      "asset_id": "A-14", "name": "Prowler 스캐너 EC2 (보안 점검 전용)",
+      "criticality": "medium", "business_impact": "low", "vulnerability_level": "", "vulnerability_ref": "",
+      "context_ref": "ChibboProwlerScannerDev ProwlerScanner, 역할 chibbo-dev-prowler-scanner",
+      "matchers": {
+        "logical_ids": ["ProwlerScanner*"],
+        "types": ["AWS::EC2::Instance"],
+        "event_sources": []
+      }
+    }
+  ]
+}
