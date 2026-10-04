@@ -161,4 +161,21 @@ describe("Chibbo staged infrastructure", () => {
     expect(foundationJson).toContain("Export");
     expect(foundationJson).toContain("AppSecurityGroup");
   });
+
+  it("signs release images with a non-exportable KMS key into a separate signature repository", () => {
+    const { registry } = foundations();
+    const template = Template.fromStack(registry);
+    template.hasResourceProperties("AWS::KMS::Key", { KeySpec: "ECC_NIST_P256", KeyUsage: "SIGN_VERIFY" });
+    template.hasResourceProperties("AWS::KMS::Alias", { AliasName: "alias/chibbo/test/image-signing" });
+    template.hasResourceProperties("AWS::ECR::Repository", { RepositoryName: "chibbo-platform-test", ImageTagMutability: "IMMUTABLE" });
+    template.hasResourceProperties("AWS::ECR::Repository", { RepositoryName: "chibbo-platform-test-signatures", ImageTagMutability: "MUTABLE" });
+    const app = new cdk.App({ defaultStackSynthesizer: new cdk.LegacyStackSynthesizer() });
+    const bootstrap = new ChibboBootstrapStack(app, "ChibboBootstrapTest", { env: { account: "992764023398", region: "ap-northeast-2" }, environmentName: "test", githubOidcProviderArn: "arn:aws:iam::992764023398:oidc-provider/token.actions.githubusercontent.com", githubOwnerId: "331039235", githubRepositoryId: "1398534215" });
+    const json = JSON.stringify(Template.fromStack(bootstrap).toJSON());
+    expect(json).toContain("kms:Sign");
+    expect(json).toContain("kms:RequestAlias");
+    expect(json).toContain("alias/chibbo/test/image-signing");
+    expect(json).toContain("chibbo-platform-test-signatures");
+    expect(json).toContain("ecr:GetDownloadUrlForLayer");
+  });
 });
