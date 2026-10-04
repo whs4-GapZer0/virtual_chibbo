@@ -2,5 +2,5 @@
   "name": "@chibbo/contracts", "version": "0.1.0", "type": "module",
   "exports": "./src/index.ts",
   "scripts": { "lint": "tsc --noEmit", "typecheck": "tsc --noEmit", "test": "vitest run" },
-  "dependencies": { "zod": "3.24.2" }, "devDependencies": { "vitest": "3.0.5", "typescript": "5.7.3" }
+  "dependencies": { "zod": "3.24.2" }, "devDependencies": { "vitest": "3.0.5", "typescript": "7.0.2" }
 }
