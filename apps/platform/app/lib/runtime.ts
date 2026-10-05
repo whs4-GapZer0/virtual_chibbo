@@ -12,10 +12,10 @@ import { anonymousKey, consumePostgresWindow } from "@chibbo/rate-limit";
 let pool: Pool | undefined;
 function database(): Pool { return (pool ??= new Pool({ ...databaseConnectionOptions(loadConfig()), max: 5 })); }
 function productionStorage() { const config = loadConfig(); if (config.CHIBBO_STORAGE_MODE !== "s3" || !config.CHIBBO_RESUME_BUCKET || !config.CHIBBO_RESUME_KMS_KEY_ID) throw new Error("S3 resume storage is not configured"); return { bucket: config.CHIBBO_RESUME_BUCKET, kmsKeyId: config.CHIBBO_RESUME_KMS_KEY_ID, client: new S3Client({}) }; }
-export type DraftInput = { companySlug: string; jobSlug: string; applicantName: string; applicantEmail: string; privacyNoticeVersion: string; mediaType: string };
+export type DraftInput = { companySlug: string; jobSlug: string; applicantName: string; applicantEmail: string; applicantPhone?: string; privacyNoticeVersion: string; mediaType: string };
 export async function createDraft(input: DraftInput) {
   const config = loadConfig(); const intentId = randomUUID(); const receipt = `CH-${Date.now().toString(36).toUpperCase()}-${randomUUID().slice(0, 6).toUpperCase()}`; const deletionSecret = generateDeletionSecret();
-  const result = await database().query("SELECT * FROM chibbo.create_public_draft($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now() + interval '10 minutes')", [input.companySlug, input.jobSlug, input.applicantName, input.applicantEmail.toLowerCase(), input.privacyNoticeVersion, hashDeletionSecret(deletionSecret, config.CHIBBO_DELETION_PEPPER), "current", intentId, receipt, input.mediaType]);
+  const result = await database().query("SELECT * FROM chibbo.create_public_draft($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now() + interval '10 minutes',$11)", [input.companySlug, input.jobSlug, input.applicantName, input.applicantEmail.toLowerCase(), input.privacyNoticeVersion, hashDeletionSecret(deletionSecret, config.CHIBBO_DELETION_PEPPER), "current", intentId, receipt, input.mediaType, input.applicantPhone ?? null]);
   if (result.rowCount !== 1) throw new Error("draft creation failed");
   const companyId = result.rows[0].company_id as string;
   const upload = config.CHIBBO_STORAGE_MODE === "s3" ? { adapter: "s3-presigned-post", ...(await createProductionUploadPost(productionStorage(), intentId, input.mediaType)) } : process.env.NODE_ENV === "test" ? { adapter: "local-only-test-adapter", ...localOnlyUploadPolicy(intentId, input.mediaType, "alias/chibbo-resumes") } : (() => { throw new Error("S3 storage is required outside tests"); })();

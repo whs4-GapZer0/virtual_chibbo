@@ -28,7 +28,7 @@ export const EVENT_SOURCE_POLICY: Record<EventSource, { scope: EventScope; conta
   "approval-record": { scope: "legal-corporation", containsTenantData: false, retentionDays: 365, readerPermissionSet: "Chibbo-Approval" }
 };
 
-export const UploadInitInput = z.object({ applicantName: z.string().trim().min(1).max(120), applicantEmail: z.string().trim().email().max(254), privacyNoticeVersion: z.string().min(1).max(64), privacyNoticeAcknowledged: z.literal(true), filename: z.string().min(1).max(255), mediaType: z.enum(["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]), sizeBytes: z.number().int().min(1).max(5 * 1024 * 1024) });
+export const UploadInitInput = z.object({ applicantName: z.string().trim().min(1).max(120), applicantEmail: z.string().trim().email().max(254), applicantPhone: z.string().trim().regex(/^[0-9+() -]{7,20}$/).optional(), privacyNoticeVersion: z.string().min(1).max(64), privacyNoticeAcknowledged: z.literal(true), filename: z.string().min(1).max(255), mediaType: z.enum(["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]), sizeBytes: z.number().int().min(1).max(5 * 1024 * 1024) });
 export const FinalizeUploadInput = z.object({ objectVersionId: z.string().min(1).max(1024), sha256: z.string().regex(/^[a-f0-9]{64}$/i) });
 export const StatusChangeInput = z.object({ status: z.enum(["reviewing", "accepted", "rejected"]), rowVersion: z.number().int().min(1) });
 export const DeletionRequestInput = z.object({ deletionSecret: z.string().min(43).max(128) });

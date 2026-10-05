@@ -1,3 +1,19 @@
-import Link from "next/link"; import { listPublicJobs } from "../../lib/jobs";
+import { listPublicJobs } from "../../lib/jobs";
+import { JobBoard } from "./job-board";
+
 export const dynamic = "force-dynamic";
-export default async function JobsPage() { const jobs = await listPublicJobs(); return <main><h1>치뽀 채용지원</h1><p className="muted">합성 데이터만 사용하는 데모 채용 공고입니다.</p>{jobs.map((job) => <article className="card" key={`${job.companySlug}/${job.slug}`}><p className="muted">{job.companyName} · {job.workType}</p><h2>{job.title}</h2><p>{job.description}</p><Link href={`/companies/${job.companySlug}/jobs/${job.slug}`}>공고 보기</Link></article>)}</main>; }
+export const metadata = { title: "채용공고" };
+
+export default async function JobsPage() {
+  const jobs = await listPublicJobs();
+  const companies = new Set(jobs.map((job) => job.companySlug)).size;
+  return (
+    <main>
+      <div className="board-head">
+        <h1>지금 지원할 수 있는 공고 {jobs.length}건</h1>
+        <p className="muted">{companies}개 기업이 치뽀에서 함께 일할 사람을 찾고 있습니다. 직무나 회사 이름으로 찾아보세요.</p>
+      </div>
+      <JobBoard jobs={jobs} now={new Date().toISOString()} />
+    </main>
+  );
+}
