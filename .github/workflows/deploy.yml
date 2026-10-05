@@ -116,8 +116,15 @@ jobs:
           # Fargate task definitions are ARM64.  Build and push that exact
           # platform from the AMD64 GitHub runner; the immutable commit tag
           # remains the runnable image rather than an attestation artifact.
-          docker buildx build --pull --platform linux/arm64 --provenance=false --sbom=false --tag "${repository_uri}:${GITHUB_SHA}" --push .
-          digest="$(aws ecr describe-images --repository-name chibbo-platform-dev --image-ids imageTag="${GITHUB_SHA}" --query 'imageDetails[0].imageDigest' --output text)"
+          # The tag is immutable, so a retry of the same commit (after a later
+          # step failed) reuses the image that commit already pushed; the
+          # signing and verification steps below still gate it.
+          if digest="$(aws ecr describe-images --repository-name chibbo-platform-dev --image-ids imageTag="${GITHUB_SHA}" --query 'imageDetails[0].imageDigest' --output text 2>/dev/null)" && test -n "$digest" && test "$digest" != "None"; then
+            echo "Reusing ${repository_uri}:${GITHUB_SHA} (${digest}) already pushed for this commit."
+          else
+            docker buildx build --pull --platform linux/arm64 --provenance=false --sbom=false --tag "${repository_uri}:${GITHUB_SHA}" --push .
+            digest="$(aws ecr describe-images --repository-name chibbo-platform-dev --image-ids imageTag="${GITHUB_SHA}" --query 'imageDetails[0].imageDigest' --output text)"
+          fi
           test -n "$digest" && test "$digest" != "None"
           printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
       - name: Install cosign
