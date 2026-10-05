@@ -8,6 +8,8 @@ GitHub Actions의 `deploy-dev`는 `main`과 protected environment `chibbo-dev`�
 4. workflow가 CIDR 중복, runtime secret, certificate, Budget, 비용 증거를 확인한 뒤 registry foundation을 먼저 만든다. image를 ECR에 commit SHA tag로 push한 뒤 digest를 조회해 ECS task definition에 `repository@sha256:...`으로 고정한다.
 5. protected environment가 `CHIBBO_MIGRATION_TASK_ARN`과 `CHIBBO_EXPAND_MIGRATION_APPROVAL_ID`를 제공해 expand-migration change record를 검증한 뒤에만 service deploy와 HTTPS smoke check가 이어진다. migrator-only database secret과 task launcher는 별도 review gate가 남아 있으며, 그 전에는 이 workflow가 migration을 실행했다고 주장하지 않는다. contract migration은 한 rollback window 이후 별도 protected deployment에서만 실행한다.
 
+합성 시드(`database/seed.synthetic.sql`)는 기본으로 넣지 않는다. 새 시드를 반영해야 할 때만 `seed_synthetic`을 켜고 실행한다. 시드는 지어낸 값만 담고, 여러 번 실행해도 결과가 같으며, 이미 있는 지원서를 덮어쓰지 않는다.
+
 초기 GitHub OIDC provider와 deploy role은 이미 존재하는 계정 bootstrap authority가 한 번 생성해야 한다. 이 repository는 그 bootstrap credential, Identity Center 초대, Entra B2B 초대, DNS 변경을 자동 생성하거나 저장하지 않는다.
 
 ## 이미지 서명·검증 게이트 (GRC TVM-E-03)
