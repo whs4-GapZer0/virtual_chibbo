@@ -39,6 +39,11 @@ on:
         description: Approved Chibbo monthly AWS Budget amount
         required: true
         type: string
+      seed_synthetic:
+        description: Apply database/seed.synthetic.sql after migrations (synthetic data only; idempotent)
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   id-token: write
@@ -198,6 +203,10 @@ jobs:
           pnpm --dir infra exec cdk synth ChibboMigratorDev --output "$template_dir" -c releaseMigrator=true -c imageDigest="${{ steps.image.outputs.digest }}" -c runtimeConfigSecretName="$RUNTIME_CONFIG_SECRET_NAME" -c migratorDbSecretName="$CHIBBO_MIGRATOR_DB_SECRET_NAME" -c appDbSecretName="$CHIBBO_APP_DB_SECRET_NAME"
           aws cloudformation deploy --stack-name ChibboMigratorDev --template-file "$template_dir/ChibboMigratorDev.template.json" --s3-bucket "$CHIBBO_DEPLOYMENT_ASSETS_BUCKET" --s3-prefix cloudformation --capabilities CAPABILITY_NAMED_IAM --role-arn "$CHIBBO_CFN_EXECUTION_ROLE_ARN"
       - name: Run approved expand migration in its one-off task
+        env:
+          # Opt-in per run. The seed holds only invented records and never
+          # overwrites existing applications, so a retry is safe.
+          CHIBBO_SEED_SYNTHETIC: ${{ inputs.seed_synthetic && 'true' || 'false' }}
         run: bash ./scripts/run-expand-migration.sh
       - name: Deploy digest-pinned application service
         run: |
