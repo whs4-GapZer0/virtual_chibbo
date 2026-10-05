@@ -37,7 +37,7 @@ jobs:
       GRC_PLATFORM_INSTANCE_ID: "038485873836"
       EVIDENCE_BUCKET: gapzero-evidence-992764023398-ap-northeast-2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - name: Assume the Bootstrap-provisioned TVM exporter role

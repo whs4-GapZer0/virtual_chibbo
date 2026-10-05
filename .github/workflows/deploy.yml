@@ -73,7 +73,7 @@ jobs:
       CHIBBO_CFN_EXECUTION_ROLE_ARN: ${{ inputs.cloudformation_execution_role_arn }}
       CHIBBO_EXPAND_MIGRATION_APPROVAL_ID: ${{ vars.CHIBBO_EXPAND_MIGRATION_APPROVAL_ID }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
         with:
           version: 10.4.1
