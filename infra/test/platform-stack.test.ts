@@ -72,6 +72,14 @@ describe("Chibbo staged infrastructure", () => {
     }
     expect(gunzip(prowlerS3RunnerGzipBase64)).toContain("s3_bucket_secure_transport_policy");
     expect(gunzip(prowlerControlRunnerGzipBase64)).toContain("CHIBBO_PROWLER_CHECKS");
+    // The daily image scan also publishes a CycloneDX SBOM of the same digest
+    // for Dependency-Track, converted offline from that scan's report.
+    const trivyRunner = gunzip(trivyRunnerGzipBase64);
+    expect(trivyRunner).toContain("--list-all-pkgs");
+    expect(trivyRunner).toMatch(/--network none[\s\S]*convert \\\n\s+--format cyclonedx/);
+    expect(trivyRunner).toContain("exports/trivy/chibbo/sbom-latest.cdx.json");
+    expect(trivyRunner.indexOf("\"$SBOM_LATEST_KEY\"; do")).toBeLessThan(trivyRunner.indexOf("\"$ARCHIVE_KEY\" \"$LATEST_KEY\"; do"));
+    expect(json).toContain("exports/trivy/chibbo/sbom-latest.cdx.json");
     expect(json).toContain("chibbo-run-prowler-control");
     // TVM-C-01 keeps its unit, schedule and object names.
     expect(json).toContain("chibbo-prowler-tvm.timer");

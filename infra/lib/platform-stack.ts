@@ -539,6 +539,8 @@ export class ChibboProwlerScannerStack extends Stack {
     new CfnOutput(this, "ProwlerScannerInstanceId", { value: instance.instanceId });
     new CfnOutput(this, "ProwlerSourceArtifactPrefix", { value: `s3://gapzero-evidence-${this.account}-${this.region}/exports/prowler/chibbo/` });
     new CfnOutput(this, "TrivySourceArtifactUri", { value: `s3://gapzero-evidence-${this.account}-${this.region}/exports/trivy/chibbo/latest.json` });
+    // The same scan's CycloneDX SBOM; GapZer0 uploads it to Dependency-Track.
+    new CfnOutput(this, "TrivySbomArtifactUri", { value: `s3://gapzero-evidence-${this.account}-${this.region}/exports/trivy/chibbo/sbom-latest.cdx.json` });
   }
 }
 
