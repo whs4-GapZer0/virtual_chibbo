@@ -78,7 +78,7 @@ describe("Chibbo staged infrastructure", () => {
     expect(trivyRunner).toContain("--list-all-pkgs");
     expect(trivyRunner).toMatch(/--network none[\s\S]*convert \\\n\s+--format cyclonedx/);
     expect(trivyRunner).toContain("exports/trivy/chibbo/sbom-latest.cdx.json");
-    expect(trivyRunner.indexOf("SBOM_LATEST_KEY\"; do")).toBeLessThan(trivyRunner.indexOf("\"$LATEST_KEY\"; do"));
+    expect(trivyRunner.indexOf("\"$SBOM_LATEST_KEY\"; do")).toBeLessThan(trivyRunner.indexOf("\"$ARCHIVE_KEY\" \"$LATEST_KEY\"; do"));
     expect(json).toContain("exports/trivy/chibbo/sbom-latest.cdx.json");
     expect(json).toContain("chibbo-run-prowler-control");
     // TVM-C-01 keeps its unit, schedule and object names.

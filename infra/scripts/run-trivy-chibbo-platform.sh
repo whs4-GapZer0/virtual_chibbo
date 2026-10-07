@@ -67,9 +67,11 @@ done
 test "${#matching_images[@]}" -eq 1
 image_ref="${matching_images[0]}"
 
-if docker container inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
-  docker rm -f "$CONTAINER_NAME" >/dev/null
-fi
+for name in "$CONTAINER_NAME" "${CONTAINER_NAME}-sbom"; do
+  if docker container inspect "$name" >/dev/null 2>&1; then
+    docker rm -f "$name" >/dev/null
+  fi
+done
 
 # Trivy reads the private ECR image with the scanner's instance role through
 # the AWS SDK. Only vulnerability scanning is enabled because AST-C-06 judges
@@ -91,8 +93,27 @@ docker run --rm \
     --output /output/report.json \
     "$image_ref"
 
+scan_file="${run_dir}/report.json"
+sbom_file="${run_dir}/sbom.cdx.json"
+python3 - "$scan_file" "$image_ref" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as report_file:
+    report = json.load(report_file)
+metadata = report.get("Metadata") if isinstance(report, dict) else None
+operating_system = metadata.get("OS") if isinstance(metadata, dict) else None
+if report.get("ArtifactName") != sys.argv[2]:
+    raise SystemExit("Trivy report does not identify the running image digest")
+if not isinstance(operating_system, dict) or not isinstance(operating_system.get("Family"), str) or not operating_system["Family"]:
+    raise SystemExit("Trivy report does not contain operating-system metadata")
+PY
+
 # Derive the SBOM from that report instead of scanning again: same digest,
-# same package list.  Conversion needs no network or registry access.
+# same package list.  Conversion needs no network or registry access.  An
+# SBOM failure never withholds the report AST-C-06 and TVM-C-01 judge; the
+# run still exits non-zero after publishing it.
+sbom_ok=1
 docker run --rm \
   --name "${CONTAINER_NAME}-sbom" \
   --network none \
@@ -103,72 +124,66 @@ docker run --rm \
   "$TRIVY_IMAGE" convert \
     --format cyclonedx \
     --output /output/sbom.cdx.json \
-    /output/report.json
-
-scan_file="${run_dir}/report.json"
-sbom_file="${run_dir}/sbom.cdx.json"
-python3 - "$scan_file" "$sbom_file" "$image_ref" <<'PY'
+    /output/report.json || sbom_ok=0
+if [ "$sbom_ok" = 1 ] && ! python3 - "$scan_file" "$sbom_file" <<'PY'
 import json
 import sys
 
+# GapZer0 must find every application package of the report in
+# Dependency-Track: compare by purl, else by name (group joined, any case).
+def key(name, version):
+    return (str(name).casefold(), version)
+
 with open(sys.argv[1], encoding="utf-8") as report_file:
     report = json.load(report_file)
-metadata = report.get("Metadata") if isinstance(report, dict) else None
-operating_system = metadata.get("OS") if isinstance(metadata, dict) else None
-if report.get("ArtifactName") != sys.argv[3]:
-    raise SystemExit("Trivy report does not identify the running image digest")
-if not isinstance(operating_system, dict) or not isinstance(operating_system.get("Family"), str) or not operating_system["Family"]:
-    raise SystemExit("Trivy report does not contain operating-system metadata")
-application = {
-    (package.get("Name"), package.get("Version"))
-    for result in report.get("Results") or [] if isinstance(result, dict) and result.get("Class") == "lang-pkgs"
-    for package in result.get("Packages") or [] if isinstance(package, dict)
-}
-if not application:
-    raise SystemExit("Trivy report lists no application packages")
-
 with open(sys.argv[2], encoding="utf-8") as sbom_file:
     sbom = json.load(sbom_file)
 subject = (sbom.get("metadata") or {}).get("component") or {}
-components = sbom.get("components") or []
 if sbom.get("bomFormat") != "CycloneDX" or subject.get("name") != report["ArtifactName"]:
     raise SystemExit("CycloneDX SBOM does not describe the scanned image")
-# GapZer0 matches Dependency-Track components to these packages by name and
-# version (a scoped npm package is group "@scope" plus name).
-listed = {
-    (f"{component['group']}/{component.get('name')}" if component.get("group") else component.get("name"), component.get("version"))
-    for component in components if isinstance(component, dict)
-}
-if application - listed:
-    raise SystemExit("CycloneDX SBOM is missing application packages of the Trivy report")
+purls, names = set(), set()
+for component in sbom.get("components") or []:
+    if isinstance(component, dict):
+        purls.add(component.get("purl"))
+        name, group, version = component.get("name"), component.get("group"), component.get("version")
+        names.add(key(name, version))
+        if group:
+            names |= {key(f"{group}/{name}", version), key(f"{group}:{name}", version)}
+packages = [
+    package for result in report.get("Results") or [] if isinstance(result, dict) and result.get("Class") == "lang-pkgs"
+    for package in result.get("Packages") or [] if isinstance(package, dict)
+]
+missing = [
+    package.get("Name") for package in packages
+    if (package.get("Identifier") or {}).get("PURL") not in purls and key(package.get("Name"), package.get("Version")) not in names
+]
+if not packages or missing:
+    raise SystemExit(f"CycloneDX SBOM is missing application packages: {missing[:5]}")
 PY
+then
+  sbom_ok=0
+fi
 
 # The GapZer0 evidence bucket is versioned. Keep timestamped source objects
 # for audit and update stable, versioned keys GapZer0 reads.  The SBOM goes
 # first, so a new report is never published without its SBOM.
-for object_key in "$SBOM_ARCHIVE_KEY" "$SBOM_LATEST_KEY"; do
-  aws s3api put-object \
-    --region "$AWS_REGION" \
-    --bucket "$EVIDENCE_BUCKET" \
-    --key "$object_key" \
-    --body "$sbom_file" \
-    --content-type application/vnd.cyclonedx+json \
-    --server-side-encryption AES256 \
-    --metadata source=virtual-chibbo,scanner=trivy,format=cyclonedx \
-    --no-cli-pager >/dev/null
-done
+publish() {
+  aws s3api put-object --region "$AWS_REGION" --bucket "$EVIDENCE_BUCKET" --key "$1" --body "$2" \
+    --content-type "$3" --server-side-encryption AES256 --metadata "$4" --no-cli-pager >/dev/null
+}
+if [ "$sbom_ok" = 1 ]; then
+  for object_key in "$SBOM_ARCHIVE_KEY" "$SBOM_LATEST_KEY"; do
+    publish "$object_key" "$sbom_file" application/vnd.cyclonedx+json source=virtual-chibbo,scanner=trivy,format=cyclonedx
+  done
+fi
 for object_key in "$ARCHIVE_KEY" "$LATEST_KEY"; do
-  aws s3api put-object \
-    --region "$AWS_REGION" \
-    --bucket "$EVIDENCE_BUCKET" \
-    --key "$object_key" \
-    --body "$scan_file" \
-    --content-type application/json \
-    --server-side-encryption AES256 \
-    --metadata source=virtual-chibbo,scanner=trivy \
-    --no-cli-pager >/dev/null
+  publish "$object_key" "$scan_file" application/json source=virtual-chibbo,scanner=trivy
 done
 
 printf 'Trivy source artifact archived: s3://%s/%s\n' "$EVIDENCE_BUCKET" "$ARCHIVE_KEY"
 printf 'Trivy latest source artifact: s3://%s/%s\n' "$EVIDENCE_BUCKET" "$LATEST_KEY"
+if [ "$sbom_ok" != 1 ]; then
+  echo "CycloneDX SBOM was not produced or validated; the report was published without it" >&2
+  exit 1
+fi
 printf 'CycloneDX SBOM latest artifact: s3://%s/%s\n' "$EVIDENCE_BUCKET" "$SBOM_LATEST_KEY"

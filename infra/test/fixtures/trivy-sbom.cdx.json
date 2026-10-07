@@ -1,0 +1,290 @@
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.7.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.7",
+  "serialNumber": "urn:uuid:67c4b9cc-1437-4b6f-984a-dda2d247c3a8",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-10-07T03:48:04+00:00",
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "manufacturer": {
+            "name": "Aqua Security Software Ltd."
+          },
+          "group": "aquasecurity",
+          "name": "trivy",
+          "version": "0.75.0"
+        }
+      ]
+    },
+    "component": {
+      "bom-ref": "a50eb638-9568-4a0d-8204-0a47ce719eff",
+      "type": "container",
+      "name": "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/chibbo-platform-dev@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "properties": [
+        {
+          "name": "aquasecurity:trivy:SchemaVersion",
+          "value": "2"
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "bom-ref": "31e30cd1-103c-41e6-902e-7954eecb3fa4",
+      "type": "operating-system",
+      "name": "debian",
+      "version": "12.11",
+      "properties": [
+        {
+          "name": "aquasecurity:trivy:Class",
+          "value": "os-pkgs"
+        },
+        {
+          "name": "aquasecurity:trivy:Type",
+          "value": "debian"
+        }
+      ]
+    },
+    {
+      "bom-ref": "3bdb9b74-c568-4707-935e-63909ea61128",
+      "type": "library",
+      "name": "openssl",
+      "version": "3.0.17-1~deb12u2",
+      "properties": [
+        {
+          "name": "aquasecurity:trivy:PkgID",
+          "value": "openssl@3.0.17-1~deb12u2"
+        },
+        {
+          "name": "aquasecurity:trivy:PkgType",
+          "value": "debian"
+        }
+      ]
+    },
+    {
+      "bom-ref": "ce7ff6e7-b823-4354-aec7-6b7bdb85d82d",
+      "type": "library",
+      "name": "libc6",
+      "version": "2.36-9+deb12u10",
+      "properties": [
+        {
+          "name": "aquasecurity:trivy:PkgID",
+          "value": "libc6@2.36-9+deb12u10"
+        },
+        {
+          "name": "aquasecurity:trivy:PkgType",
+          "value": "debian"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:maven/org.slf4j/slf4j-api@2.0.9",
+      "type": "library",
+      "group": "org.slf4j",
+      "name": "slf4j-api",
+      "version": "2.0.9",
+      "purl": "pkg:maven/org.slf4j/slf4j-api@2.0.9",
+      "properties": [
+        {
+          "name": "aquasecurity:trivy:FilePath",
+          "value": "app/lib/slf4j-api-2.0.9.jar"
+        },
+        {
+          "name": "aquasecurity:trivy:PkgID",
+          "value": "org.slf4j:slf4j-api:2.0.9"
+        },
+        {
+          "name": "aquasecurity:trivy:PkgType",
+          "value": "jar"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:npm/%40next/env@16.0.0",
+      "type": "library",
+      "group": "@next",
+      "name": "env",
+      "version": "16.0.0",
+      "purl": "pkg:npm/%40next/env@16.0.0",
+      "properties": [
+        {
+          "name": "aquasecurity:trivy:PkgID",
+          "value": "@next/env@16.0.0"
+        },
+        {
+          "name": "aquasecurity:trivy:PkgType",
+          "value": "node-pkg"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:npm/jsonstream@1.3.5",
+      "type": "library",
+      "name": "jsonstream",
+      "version": "1.3.5",
+      "purl": "pkg:npm/jsonstream@1.3.5",
+      "properties": [
+        {
+          "name": "aquasecurity:trivy:PkgID",
+          "value": "JSONStream@1.3.5"
+        },
+        {
+          "name": "aquasecurity:trivy:PkgType",
+          "value": "node-pkg"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:npm/next@16.0.0",
+      "type": "library",
+      "name": "next",
+      "version": "16.0.0",
+      "purl": "pkg:npm/next@16.0.0",
+      "properties": [
+        {
+          "name": "aquasecurity:trivy:PkgID",
+          "value": "next@16.0.0"
+        },
+        {
+          "name": "aquasecurity:trivy:PkgType",
+          "value": "node-pkg"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:npm/react-dom@19.2.0",
+      "type": "library",
+      "name": "react-dom",
+      "version": "19.2.0",
+      "purl": "pkg:npm/react-dom@19.2.0",
+      "properties": [
+        {
+          "name": "aquasecurity:trivy:PkgID",
+          "value": "react-dom@19.2.0"
+        },
+        {
+          "name": "aquasecurity:trivy:PkgType",
+          "value": "node-pkg"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:npm/react@19.2.0",
+      "type": "library",
+      "name": "react",
+      "version": "19.2.0",
+      "purl": "pkg:npm/react@19.2.0",
+      "properties": [
+        {
+          "name": "aquasecurity:trivy:PkgID",
+          "value": "react@19.2.0"
+        },
+        {
+          "name": "aquasecurity:trivy:PkgType",
+          "value": "node-pkg"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:npm/scheduler@0.27.0",
+      "type": "library",
+      "name": "scheduler",
+      "version": "0.27.0",
+      "purl": "pkg:npm/scheduler@0.27.0",
+      "properties": [
+        {
+          "name": "aquasecurity:trivy:PkgID",
+          "value": "scheduler@0.27.0"
+        },
+        {
+          "name": "aquasecurity:trivy:PkgType",
+          "value": "node-pkg"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:npm/styled-jsx@5.1.6",
+      "type": "library",
+      "name": "styled-jsx",
+      "version": "5.1.6",
+      "purl": "pkg:npm/styled-jsx@5.1.6",
+      "properties": [
+        {
+          "name": "aquasecurity:trivy:PkgID",
+          "value": "styled-jsx@5.1.6"
+        },
+        {
+          "name": "aquasecurity:trivy:PkgType",
+          "value": "node-pkg"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "31e30cd1-103c-41e6-902e-7954eecb3fa4",
+      "dependsOn": [
+        "3bdb9b74-c568-4707-935e-63909ea61128",
+        "ce7ff6e7-b823-4354-aec7-6b7bdb85d82d"
+      ]
+    },
+    {
+      "ref": "3bdb9b74-c568-4707-935e-63909ea61128",
+      "dependsOn": []
+    },
+    {
+      "ref": "a50eb638-9568-4a0d-8204-0a47ce719eff",
+      "dependsOn": [
+        "31e30cd1-103c-41e6-902e-7954eecb3fa4",
+        "pkg:maven/org.slf4j/slf4j-api@2.0.9",
+        "pkg:npm/%40next/env@16.0.0",
+        "pkg:npm/jsonstream@1.3.5",
+        "pkg:npm/next@16.0.0",
+        "pkg:npm/react-dom@19.2.0",
+        "pkg:npm/react@19.2.0",
+        "pkg:npm/scheduler@0.27.0",
+        "pkg:npm/styled-jsx@5.1.6"
+      ]
+    },
+    {
+      "ref": "ce7ff6e7-b823-4354-aec7-6b7bdb85d82d",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:maven/org.slf4j/slf4j-api@2.0.9",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40next/env@16.0.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/jsonstream@1.3.5",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/next@16.0.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/react-dom@19.2.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/react@19.2.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/scheduler@0.27.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/styled-jsx@5.1.6",
+      "dependsOn": []
+    }
+  ],
+  "vulnerabilities": []
+}
