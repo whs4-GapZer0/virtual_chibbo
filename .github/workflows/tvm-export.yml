@@ -38,7 +38,7 @@ jobs:
       EVIDENCE_BUCKET: gapzero-evidence-992764023398-ap-northeast-2
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - name: Assume the Bootstrap-provisioned TVM exporter role
         uses: aws-actions/configure-aws-credentials@v4
