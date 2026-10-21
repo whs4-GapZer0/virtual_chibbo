@@ -41,7 +41,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - name: Assume the Bootstrap-provisioned TVM exporter role
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::992764023398:role/chibbo-dev-tvm-exporter
           role-session-name: tvm-export-${{ github.run_id }}

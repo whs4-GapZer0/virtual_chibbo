@@ -83,7 +83,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Assume the Bootstrap-provisioned Chibbo-only GitHub role
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ inputs.deploy_role_arn }}
           aws-region: ${{ env.AWS_REGION }}
