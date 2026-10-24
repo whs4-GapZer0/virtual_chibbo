@@ -56,7 +56,9 @@ GapZer0 GRC `origin/main`(b6173c6)의 수집기 코드를 그대로 썼습니다
 | AST-E-01 | 통과 | **실패** · `chibbo-dev-decoy-dormant-pay-gateway` 자산대장 미등록 | 통과 |
 | IAM-C-01 | 통과 | **실패** · `chibbo-dev-decoy-shared-device` 사람 연결 없음 | 통과 |
 
-APP-E-01(SKT)은 이 PR의 `verify` 실행에서 Trivy 산출물로 확인합니다.
+APP-E-01(SKT)은 PR #43의 `verify` 실행에서 확인했습니다. Trivy 산출물에 `ops/legacy-mgmt/server-accounts.conf`의 `plaintext-server-account-password` CRITICAL 3건(12·17·22행)이 나왔습니다.
+
+다만 이 decoy가 없어도 APP-E-01은 이미 실패 상태입니다. `pnpm-lock.yaml`에 Critical 취약점 5건(CVE-2025-55182 등)이 있고, Semgrep finding도 33건이 있습니다. 그래서 SKT decoy는 판정을 통과에서 실패로 바꾸지 않습니다. 실패 근거에 평문 비밀번호 3건을 더할 뿐입니다. GapZer0 관측에는 Critical 건수만 남습니다.
 
 ## GapZer0가 아직 못 잡는 것 (사실대로)
 
