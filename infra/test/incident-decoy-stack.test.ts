@@ -67,9 +67,42 @@ describe("incident-replica decoys", () => {
     });
   });
 
+  it("brings its own unreachable network in standalone mode", () => {
+    const app = new cdk.App({ defaultStackSynthesizer: new cdk.LegacyStackSynthesizer() });
+    const template = Template.fromStack(new ChibboIncidentDecoyStack(app, "ChibboIncidentDecoyStandalone", {
+      env: { account: "302795276649", region: "ap-northeast-2" }, environmentName: "dev", assetScope: "chibbo",
+    }));
+    template.resourceCountIs("AWS::EC2::VPC", 1);
+    template.resourceCountIs("AWS::EC2::Subnet", 1);
+    for (const type of ["AWS::EC2::InternetGateway", "AWS::EC2::NatGateway", "AWS::EC2::VPCGatewayAttachment", "AWS::EC2::Route", "AWS::EC2::EIP", "AWS::EC2::VPCPeeringConnection", "AWS::EC2::TransitGatewayAttachment", "AWS::IAM::AccessKey"]) {
+      template.resourceCountIs(type, 0);
+    }
+    template.hasResourceProperties("AWS::EC2::Subnet", { MapPublicIpOnLaunch: false });
+    // The default NACL denies everything before AWS's allow-all rule 100.
+    for (const egress of [false, true]) {
+      template.hasResourceProperties("AWS::EC2::NetworkAclEntry", {
+        NetworkAclId: { "Fn::GetAtt": [Match.anyValue(), "DefaultNetworkAcl"] }, RuleNumber: 1, Protocol: -1, RuleAction: "deny", Egress: egress, CidrBlock: "0.0.0.0/0",
+      });
+    }
+    template.hasResourceProperties("AWS::EC2::FlowLog", { ResourceType: "VPC", TrafficType: "ALL", LogDestinationType: "cloud-watch-logs" });
+    template.hasResourceProperties("AWS::Logs::LogGroup", { LogGroupName: "/chibbo/dev/decoy-flow", RetentionInDays: 365 });
+    // The only role is the Flow Log delivery role, trusted by that service alone.
+    template.resourceCountIs("AWS::IAM::Role", 1);
+    template.hasResourceProperties("AWS::IAM::Role", {
+      AssumeRolePolicyDocument: { Statement: [Match.objectLike({ Principal: { Service: "vpc-flow-logs.amazonaws.com" } })] },
+    });
+    template.hasResourceProperties("AWS::EC2::Instance", {
+      Tags: Match.arrayWith([{ Key: "gapzero:asset-scope", Value: "chibbo" }]),
+    });
+    template.hasResourceProperties("AWS::EC2::SecurityGroup", { GroupName: "chibbo-dev-decoy-femto-registration" });
+    template.resourceCountIs("AWS::IAM::User", 1);
+  });
+
   it("rejects network IDs that are not plain VPC and subnet IDs", () => {
     const app = new cdk.App({ defaultStackSynthesizer: new cdk.LegacyStackSynthesizer() });
     expect(() => new ChibboIncidentDecoyStack(app, "Bad", { env, environmentName: "test", vpcId: "REQUIRED", isolatedSubnetId: "subnet-1", assetScope: "x" })).toThrow();
+    expect(() => new ChibboIncidentDecoyStack(app, "Half", { env, environmentName: "test", vpcId: "vpc-0123abcd", assetScope: "x" })).toThrow();
+    expect(() => new ChibboIncidentDecoyStack(app, "Scope", { env, environmentName: "test", assetScope: "has space" })).toThrow();
   });
 
   it("limits the Bootstrap decoy permissions to the decoy path and stack", () => {

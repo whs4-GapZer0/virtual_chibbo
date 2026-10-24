@@ -45,9 +45,53 @@
 5. GapZer0가 다음 정기 수집(15분 주기)에서 SNS-C-01, AST-E-01, IAM-C-01을 다시 판정합니다. APP-E-01은 main의 `verify` 실행 결과를 읽습니다.
 6. 제거할 때는 같은 워크플로를 `action=remove`로 실행합니다. 스택이 이미 없는 경우에는 성공으로 끝납니다. SKT 재현은 `ops/legacy-mgmt/server-accounts.conf`를 지우는 PR로 끝납니다.
 
-주의할 점이 하나 있습니다. SKT decoy가 main에 있는 동안 `verify` 워크플로의 보안 게이트는 실패합니다. 이것이 의도된 결과이지만, 현재 main 브랜치 보호는 `verify`를 필수 검사로 요구하므로 이 PR도 병합할 수 없습니다. 이 사실을 숨기거나 `verify`를 무조건 성공 처리하면 안 됩니다. 병합 전에 기존 Critical 취약점과 이 의도된 decoy finding을 어떻게 승인·예외 처리하면서 새 Critical은 계속 차단할지, 또는 보안 게이트의 필수 정책을 어떻게 분리할지 별도 보안 결정을 기록해야 합니다.
+주의할 점이 하나 있습니다. SKT decoy가 main에 있는 동안 `verify` 워크플로의 보안 게이트는 실패합니다. 이것은 의도된 결과입니다. 그런데 main 브랜치 보호가 `verify`를 필수 검사로 요구하기 때문에, PR #43은 사용자 결정으로 이번 한 번만 우회해 병합했습니다(2026-10-25). 이후 PR도 `verify`가 계속 실패하므로 같은 결정이 다시 필요합니다. 기존 Critical 5건과 decoy 3건을 위험 수용·기준선으로 분리하고 새 Critical만 차단하도록 바꿀지는 아직 결정되지 않았습니다.
+
+## 새 계정에 단독 배포 (Chibbo Foundation이 없는 계정)
+
+GapZer0 GRC는 2026-10에 계정 `302795276649`로 옮겼습니다. 이 계정에는 `ChibboBootstrapDev`, `ChibboFoundationDev`, 치뽀의 GitHub OIDC 배포 역할이 없습니다. 또 Foundation을 새로 올리면 NAT Gateway와 RDS까지 생겨 decoy 비용을 크게 넘습니다. 그래서 decoy 스택이 **자기 격리 네트워크를 함께 가져오는 단독 모드**(`-c decoyNetwork=standalone`)를 둡니다.
+
+- **만드는 것**
+  - VPC `10.86.0.0/24`와 서브넷 하나. 인터넷 게이트웨이, NAT, 피어링이 없고 로컬 경로만 있습니다.
+  - 기본 NACL의 1번 규칙으로 인바운드·아웃바운드를 모두 거부합니다.
+  - ALL 트래픽 Flow Log와 그 전용 로그 그룹(1년 보존), 이 로그 그룹에만 쓰는 전달 역할.
+  - 위 표의 decoy 3개: 휴면 EC2, 붙지 않은 SSH 공개 보안 그룹, 무권한 IAM 사용자.
+- **만들지 않는 것**: 치뽀의 다른 스택, GitHub OIDC provider와 배포 역할. 계정에 상시 접근 경로를 새로 만들지 않습니다.
+- **배포 방법**: 그 계정에 로그인한 운영자가 아래 명령을 한 번 실행합니다.
+- **결함 분리**: decoy 네트워크 자체는 NACL·Flow Log 판정을 통과하도록 만들었습니다. 그래서 의도한 결함만 실패로 나옵니다.
+
+```bash
+export AWS_REGION=ap-northeast-2 CDK_DEFAULT_REGION=ap-northeast-2
+export CDK_DEFAULT_ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+test "$CDK_DEFAULT_ACCOUNT" = 302795276649   # 다른 계정이면 멈춘다
+pnpm install --frozen-lockfile
+pnpm --dir infra exec cdk synth ChibboIncidentDecoyDev --output /tmp/chibbo-decoy \
+  -c incidentDecoys=true -c decoyNetwork=standalone -c decoyAssetScope=chibbo
+aws cloudformation deploy --stack-name ChibboIncidentDecoyDev \
+  --template-file /tmp/chibbo-decoy/ChibboIncidentDecoyDev.template.json \
+  --capabilities CAPABILITY_NAMED_IAM
+aws cloudformation describe-stacks --stack-name ChibboIncidentDecoyDev --query 'Stacks[0].Outputs' --output table
+```
+
+제거는 아래 명령으로 합니다.
+
+```bash
+aws cloudformation delete-stack --stack-name ChibboIncidentDecoyDev
+aws cloudformation wait stack-delete-complete --stack-name ChibboIncidentDecoyDev
+```
+
+GapZer0 쪽에서 맞춰야 할 설정은 연동 설정 화면 또는 `gapzero/security-connectors`입니다.
+
+| 통제 | 필요 설정 | 없을 때 |
+| --- | --- | --- |
+| SNS-C-01 | 없음(EC2 읽기 권한만) | – |
+| AST-E-01 | `AWS_ASSET_SCOPE=chibbo`, `NETBOX_VM_TENANT_SLUG`, NetBox 연결 | NetBox 대조 행이 판정 보류. 휴면 EC2가 실패로 나오지 않음 |
+| IAM-C-01 | Entra(Graph) 연결과 계정 대조 정책 | 판정 보류 |
 
 ## 배포 전 검증 (2026-10-25)
+
+단독 모드도 같은 방법으로 확인했습니다. 빈 계정에 단독 템플릿을 올렸을 때 SNS-C-01, AST-E-01(NetBox 대조), IAM-C-01이 실패로 판정됐습니다. decoy VPC의 NACL과 Flow Log 행은 통과했습니다. moto의 CloudFormation은 `AWS::EC2::NetworkAclEntry`를 지원하지 않아서, 템플릿의 두 NACL 규칙은 EC2 API로 같은 값을 넣어 확인했습니다.
+
 
 GapZer0 GRC `origin/main`(b6173c6)의 수집기 코드를 그대로 썼습니다. moto로 만든 가상 AWS 계정에 이 저장소가 합성한 decoy 템플릿을 CloudFormation으로 올리고, 배포 전·후·삭제 후를 판정했습니다. NetBox는 등록된 인스턴스 목록만 돌려주도록 대체했고, Entra는 사용자 1명으로 고정했습니다.
 
