@@ -40,9 +40,10 @@
    - `action=deploy`
    - Bootstrap 출력의 두 역할 ARN
    - `asset_scope`: GapZer0 런타임 설정 `AWS_ASSET_SCOPE`와 같은 값. 다르면 AST-E-01이 decoy EC2를 보지 못합니다.
-3. 워크플로는 Bootstrap을 먼저 갱신하고(decoy 경로 권한 추가), Foundation의 VPC와 격리 서브넷 ID를 읽은 뒤 `ChibboIncidentDecoyDev`를 만듭니다.
-4. GapZer0가 다음 정기 수집(15분 주기)에서 SNS-C-01, AST-E-01, IAM-C-01을 다시 판정합니다. APP-E-01은 main의 `verify` 실행 결과를 읽습니다.
-5. 제거할 때는 같은 워크플로를 `action=remove`로 실행합니다. SKT 재현은 `ops/legacy-mgmt/server-accounts.conf`를 지우는 PR로 끝납니다.
+3. 워크플로는 assume한 GitHub 배포 역할의 STS account ID를 CDK 대상 계정으로 사용하고, 두 입력 역할 ARN도 같은 계정인지 확인합니다. 새 계정은 먼저 사람 운영자가 GitHub OIDC provider와 `ChibboBootstrapDev`·`ChibboFoundationDev`를 만들어야 합니다. 이 워크플로는 첫 OIDC 역할을 만들 수 없고, 기존 Foundation을 대신 만들지도 않습니다.
+4. 그 뒤 Bootstrap을 갱신하고(decoy 경로 권한 추가), Foundation의 VPC와 격리 서브넷 ID를 읽어 `ChibboIncidentDecoyDev`를 만듭니다.
+5. GapZer0가 다음 정기 수집(15분 주기)에서 SNS-C-01, AST-E-01, IAM-C-01을 다시 판정합니다. APP-E-01은 main의 `verify` 실행 결과를 읽습니다.
+6. 제거할 때는 같은 워크플로를 `action=remove`로 실행합니다. 스택이 이미 없는 경우에는 성공으로 끝납니다. SKT 재현은 `ops/legacy-mgmt/server-accounts.conf`를 지우는 PR로 끝납니다.
 
 주의할 점이 하나 있습니다. SKT decoy가 main에 있는 동안 `verify` 워크플로의 보안 게이트는 실패합니다. 이것이 의도된 결과입니다. 병합 필수 검사는 `pr-governance`라서 다른 PR의 병합은 막히지 않습니다.
 

@@ -11,7 +11,11 @@ import { ChibboIncidentDecoyStack } from "../lib/incident-decoy-stack.js";
 // have no CDK-managed file or Docker assets.
 const app = new cdk.App({ defaultStackSynthesizer: new cdk.LegacyStackSynthesizer() });
 const environmentName = app.node.tryGetContext("environment") ?? "dev";
-const env = { account: process.env.CDK_DEFAULT_ACCOUNT ?? "992764023398", region: process.env.CDK_DEFAULT_REGION ?? "ap-northeast-2" };
+const account = process.env.CDK_DEFAULT_ACCOUNT;
+if (!/^\d{12}$/.test(account ?? "")) {
+  throw new Error("CDK_DEFAULT_ACCOUNT must be the 12-digit target AWS account ID");
+}
+const env = { account, region: process.env.CDK_DEFAULT_REGION ?? "ap-northeast-2" };
 new ChibboBootstrapStack(app, `ChibboBootstrap${capitalize(environmentName)}`, {
   env, environmentName,
   githubOidcProviderArn: `arn:aws:iam::${env.account}:oidc-provider/token.actions.githubusercontent.com`,

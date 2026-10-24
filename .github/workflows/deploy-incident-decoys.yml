@@ -23,7 +23,7 @@ on:
         type: string
       asset_scope:
         description: The GapZer0 AWS_ASSET_SCOPE value that AST-E-01 filters on (tag gapzero:asset-scope)
-        required: false
+        required: true
         type: string
 
 permissions:
@@ -41,7 +41,6 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       AWS_REGION: ap-northeast-2
-      CDK_DEFAULT_ACCOUNT: "992764023398"
       CDK_DEFAULT_REGION: ap-northeast-2
       DECOY_STACK: ChibboIncidentDecoyDev
       CHIBBO_CFN_EXECUTION_ROLE_ARN: ${{ inputs.cloudformation_execution_role_arn }}
@@ -53,9 +52,33 @@ jobs:
         with:
           role-to-assume: ${{ inputs.deploy_role_arn }}
           aws-region: ${{ env.AWS_REGION }}
+      - name: Bind CDK to the assumed AWS account
+        run: |
+          account_id="$(aws sts get-caller-identity --query Account --output text)"
+          [[ "$account_id" =~ ^[0-9]{12}$ ]]
+          for role_arn in "${{ inputs.deploy_role_arn }}" "${{ inputs.cloudformation_execution_role_arn }}"; do
+            role_account_id="$(cut -d: -f5 <<<"$role_arn")"
+            [[ "$role_account_id" == "$account_id" ]] || {
+              echo "Both supplied role ARNs must belong to the assumed AWS account." >&2
+              exit 1
+            }
+          done
+          printf 'CDK_DEFAULT_ACCOUNT=%s\nCHIBBO_AWS_ACCOUNT_ID=%s\n' "$account_id" "$account_id" >> "$GITHUB_ENV"
       - name: Remove the decoy stack
         if: inputs.action == 'remove'
         run: |
+          if status="$(aws cloudformation describe-stacks --stack-name "$DECOY_STACK" --query 'Stacks[0].StackStatus' --output text 2>&1)"; then
+            if [[ "$status" == "DELETE_COMPLETE" ]]; then
+              echo "$DECOY_STACK is already deleted."
+              exit 0
+            fi
+          elif [[ "$status" == *"does not exist"* ]]; then
+            echo "$DECOY_STACK does not exist; nothing to remove."
+            exit 0
+          else
+            printf '%s\n' "$status" >&2
+            exit 1
+          fi
           aws cloudformation delete-stack --stack-name "$DECOY_STACK" --role-arn "$CHIBBO_CFN_EXECUTION_ROLE_ARN"
           aws cloudformation wait stack-delete-complete --stack-name "$DECOY_STACK"
           echo "Removed $DECOY_STACK. GapZer0 re-judges the affected controls on the next scheduled collection."
