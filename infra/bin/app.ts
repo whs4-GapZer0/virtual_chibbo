@@ -16,37 +16,48 @@ if (!/^\d{12}$/.test(account ?? "")) {
   throw new Error("CDK_DEFAULT_ACCOUNT must be the 12-digit target AWS account ID");
 }
 const env = { account, region: process.env.CDK_DEFAULT_REGION ?? "ap-northeast-2" };
-new ChibboBootstrapStack(app, `ChibboBootstrap${capitalize(environmentName)}`, {
-  env, environmentName,
-  githubOidcProviderArn: `arn:aws:iam::${env.account}:oidc-provider/token.actions.githubusercontent.com`,
-  githubOwnerId: "331039235", githubRepositoryId: "1398534215"
-});
-const registry = new ChibboRegistryStack(app, `ChibboRegistry${capitalize(environmentName)}`, { env, environmentName });
-const foundation = new ChibboFoundationStack(app, `ChibboFoundation${capitalize(environmentName)}`, { env, environmentName, appOrigin: app.node.tryGetContext("appOrigin") });
-new ChibboProwlerScannerStack(app, `ChibboProwlerScanner${capitalize(environmentName)}`, { env, environmentName, foundation });
-// Incident-replica decoys (docs/incident-decoys.md).  Opt-in only, so a plain
-// synth or the regular deploy workflows never create them.
-if (app.node.tryGetContext("incidentDecoys") === "true") {
+const incidentDecoys = app.node.tryGetContext("incidentDecoys") === "true";
+if (incidentDecoys && app.node.tryGetContext("decoyNetwork") === "standalone") {
+  // An account without Chibbo Foundation: synthesize only the decoy stack,
+  // which brings its own isolated network.  No other Chibbo stack, no GitHub
+  // OIDC role, and no context lookup for the target account.
   new ChibboIncidentDecoyStack(app, `ChibboIncidentDecoy${capitalize(environmentName)}`, {
-    env, environmentName,
-    vpcId: required(app, "decoyVpcId"), isolatedSubnetId: required(app, "decoyIsolatedSubnetId"), assetScope: required(app, "decoyAssetScope")
+    env, environmentName, assetScope: required(app, "decoyAssetScope")
   });
-}
-
-const releaseMigrator = app.node.tryGetContext("releaseMigrator") === "true";
-const releaseApplication = app.node.tryGetContext("releaseApplication") === "true";
-if (releaseMigrator || releaseApplication) {
-  const imageDigest = required(app, "imageDigest");
-  const runtimeConfigSecretName = required(app, "runtimeConfigSecretName");
-  const migratorDbSecretName = required(app, "migratorDbSecretName");
-  const appDbSecretName = required(app, "appDbSecretName");
-  const common = { env, environmentName, foundation, repository: registry.repository, imageDigest, runtimeConfigSecretName, migratorDbSecretName, appDbSecretName };
-  if (releaseMigrator) new ChibboMigratorStack(app, `ChibboMigrator${capitalize(environmentName)}`, common);
-  if (releaseApplication) new ChibboApplicationStack(app, `ChibboApplication${capitalize(environmentName)}`, {
-      ...common,
-      appOrigin: required(app, "appOrigin"), certificateArn: required(app, "certificateArn"),
-      entraClientSecretName: required(app, "entraClientSecretName"), entraTenantId: required(app, "entraTenantId"), entraClientId: required(app, "entraClientId"), entraIssuer: required(app, "entraIssuer")
+} else {
+  new ChibboBootstrapStack(app, `ChibboBootstrap${capitalize(environmentName)}`, {
+    env, environmentName,
+    githubOidcProviderArn: `arn:aws:iam::${env.account}:oidc-provider/token.actions.githubusercontent.com`,
+    githubOwnerId: "331039235", githubRepositoryId: "1398534215"
+  });
+  const registry = new ChibboRegistryStack(app, `ChibboRegistry${capitalize(environmentName)}`, { env, environmentName });
+  const foundation = new ChibboFoundationStack(app, `ChibboFoundation${capitalize(environmentName)}`, { env, environmentName, appOrigin: app.node.tryGetContext("appOrigin") });
+  new ChibboProwlerScannerStack(app, `ChibboProwlerScanner${capitalize(environmentName)}`, { env, environmentName, foundation });
+  // Incident-replica decoys inside the Chibbo Foundation VPC
+  // (docs/incident-decoys.md).  Opt-in only, so a plain synth or the regular
+  // deploy workflows never create them.
+  if (incidentDecoys) {
+    new ChibboIncidentDecoyStack(app, `ChibboIncidentDecoy${capitalize(environmentName)}`, {
+      env, environmentName,
+      vpcId: required(app, "decoyVpcId"), isolatedSubnetId: required(app, "decoyIsolatedSubnetId"), assetScope: required(app, "decoyAssetScope")
     });
+  }
+
+  const releaseMigrator = app.node.tryGetContext("releaseMigrator") === "true";
+  const releaseApplication = app.node.tryGetContext("releaseApplication") === "true";
+  if (releaseMigrator || releaseApplication) {
+    const imageDigest = required(app, "imageDigest");
+    const runtimeConfigSecretName = required(app, "runtimeConfigSecretName");
+    const migratorDbSecretName = required(app, "migratorDbSecretName");
+    const appDbSecretName = required(app, "appDbSecretName");
+    const common = { env, environmentName, foundation, repository: registry.repository, imageDigest, runtimeConfigSecretName, migratorDbSecretName, appDbSecretName };
+    if (releaseMigrator) new ChibboMigratorStack(app, `ChibboMigrator${capitalize(environmentName)}`, common);
+    if (releaseApplication) new ChibboApplicationStack(app, `ChibboApplication${capitalize(environmentName)}`, {
+        ...common,
+        appOrigin: required(app, "appOrigin"), certificateArn: required(app, "certificateArn"),
+        entraClientSecretName: required(app, "entraClientSecretName"), entraTenantId: required(app, "entraTenantId"), entraClientId: required(app, "entraClientId"), entraIssuer: required(app, "entraIssuer")
+      });
+  }
 }
 
 function required(app: cdk.App, key: string): string {
