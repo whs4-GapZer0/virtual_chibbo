@@ -23,6 +23,7 @@ body:
         - A-07 S3 감사·구성 이력 버킷
         - A-08 GitHub 저장소 virtual_chibbo
         - A-14 Prowler 스캐너 EC2
+        - A-15 사고 재현 decoy (격리)
     validations:
       required: true
   - type: textarea

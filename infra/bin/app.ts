@@ -1,6 +1,7 @@
 import "source-map-support/register.js";
 import * as cdk from "aws-cdk-lib";
 import { ChibboApplicationStack, ChibboBootstrapStack, ChibboFoundationStack, ChibboMigratorStack, ChibboProwlerScannerStack, ChibboRegistryStack } from "../lib/platform-stack.js";
+import { ChibboIncidentDecoyStack } from "../lib/incident-decoy-stack.js";
 
 // CDK's CliCredentialsStackSynthesizer still requires the account-wide
 // hnb659fds bootstrap asset bucket.  This project deliberately does not use
@@ -10,7 +11,11 @@ import { ChibboApplicationStack, ChibboBootstrapStack, ChibboFoundationStack, Ch
 // have no CDK-managed file or Docker assets.
 const app = new cdk.App({ defaultStackSynthesizer: new cdk.LegacyStackSynthesizer() });
 const environmentName = app.node.tryGetContext("environment") ?? "dev";
-const env = { account: process.env.CDK_DEFAULT_ACCOUNT ?? "992764023398", region: process.env.CDK_DEFAULT_REGION ?? "ap-northeast-2" };
+const account = process.env.CDK_DEFAULT_ACCOUNT;
+if (!/^\d{12}$/.test(account ?? "")) {
+  throw new Error("CDK_DEFAULT_ACCOUNT must be the 12-digit target AWS account ID");
+}
+const env = { account, region: process.env.CDK_DEFAULT_REGION ?? "ap-northeast-2" };
 new ChibboBootstrapStack(app, `ChibboBootstrap${capitalize(environmentName)}`, {
   env, environmentName,
   githubOidcProviderArn: `arn:aws:iam::${env.account}:oidc-provider/token.actions.githubusercontent.com`,
@@ -19,6 +24,14 @@ new ChibboBootstrapStack(app, `ChibboBootstrap${capitalize(environmentName)}`, {
 const registry = new ChibboRegistryStack(app, `ChibboRegistry${capitalize(environmentName)}`, { env, environmentName });
 const foundation = new ChibboFoundationStack(app, `ChibboFoundation${capitalize(environmentName)}`, { env, environmentName, appOrigin: app.node.tryGetContext("appOrigin") });
 new ChibboProwlerScannerStack(app, `ChibboProwlerScanner${capitalize(environmentName)}`, { env, environmentName, foundation });
+// Incident-replica decoys (docs/incident-decoys.md).  Opt-in only, so a plain
+// synth or the regular deploy workflows never create them.
+if (app.node.tryGetContext("incidentDecoys") === "true") {
+  new ChibboIncidentDecoyStack(app, `ChibboIncidentDecoy${capitalize(environmentName)}`, {
+    env, environmentName,
+    vpcId: required(app, "decoyVpcId"), isolatedSubnetId: required(app, "decoyIsolatedSubnetId"), assetScope: required(app, "decoyAssetScope")
+  });
+}
 
 const releaseMigrator = app.node.tryGetContext("releaseMigrator") === "true";
 const releaseApplication = app.node.tryGetContext("releaseApplication") === "true";

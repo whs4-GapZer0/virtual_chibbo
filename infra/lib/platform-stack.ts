@@ -82,6 +82,14 @@ export class ChibboBootstrapStack extends Stack {
       actions: ["ssm:GetParameters"],
       resources: [`arn:${this.partition}:ssm:${this.region}::parameter/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64`],
     }));
+    // Incident-replica decoys (docs/incident-decoys.md) include one IAM user
+    // with no credential and no policy.  User management is limited to the
+    // decoy path, so no other IAM user can be created or changed.
+    this.cloudFormationExecutionRole.addToPolicy(new iam.PolicyStatement({
+      sid: "ManageIncidentDecoyUsersOnly",
+      actions: ["iam:CreateUser", "iam:DeleteUser", "iam:GetUser", "iam:TagUser", "iam:UntagUser", "iam:ListUserTags", "iam:ListAttachedUserPolicies", "iam:ListUserPolicies", "iam:ListGroupsForUser", "iam:GetLoginProfile", "iam:ListAccessKeys"],
+      resources: [`arn:${this.partition}:iam::${this.account}:user/chibbo-decoy/*`],
+    }));
     // GitHub repositories created after 2026-07-15 use immutable OIDC
     // subject claims. AWS does not evaluate GitHub custom claims, so pin the
     // standard `sub` claim itself to this owner/repository ID pair and the
@@ -98,6 +106,11 @@ export class ChibboBootstrapStack extends Stack {
     });
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["cloudformation:CreateChangeSet", "cloudformation:DeleteChangeSet", "cloudformation:DescribeChangeSet", "cloudformation:DescribeStacks", "cloudformation:DescribeStackEvents", "cloudformation:ExecuteChangeSet", "cloudformation:GetTemplateSummary"], resources: [this.formatArn({ service: "cloudformation", resource: "stack", resourceName: "Chibbo*/*" })] }));
     this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ actions: ["iam:PassRole"], resources: [this.cloudFormationExecutionRole.roleArn], conditions: { StringEquals: { "iam:PassedToService": "cloudformation.amazonaws.com" } } }));
+    // Only the incident-replica decoy stack may be deleted from GitHub.
+    this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ sid: "RemoveIncidentDecoysOnly", actions: ["cloudformation:DeleteStack"], resources: [this.formatArn({ service: "cloudformation", resource: "stack", resourceName: "ChibboIncidentDecoy*/*" })] }));
+    // The decoy workflow reads the Foundation VPC and isolated subnet IDs
+    // instead of importing them, so Foundation never pins a decoy export.
+    this.githubDeployRole.addToPolicy(new iam.PolicyStatement({ sid: "ReadFoundationNetworkIds", actions: ["cloudformation:DescribeStackResources"], resources: [this.formatArn({ service: "cloudformation", resource: "stack", resourceName: `ChibboFoundation${props.environmentName.charAt(0).toUpperCase()}${props.environmentName.slice(1)}/*` })] }));
     // AWS Config's recorder is configured after the Foundation stack exists.
     // CDK gives that service role a physical suffix, so constrain PassRole to
     // this stack's generated recorder role and the Config service only.
