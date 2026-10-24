@@ -1,0 +1,116 @@
+name: deploy-incident-decoys
+
+# Creates or removes the incident-replica decoys (docs/incident-decoys.md).
+# Only the Bootstrap stack (for the decoy-scoped IAM permissions) and the
+# ChibboIncidentDecoy stack are touched; Foundation, the scanner and the
+# application are never updated by this workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: deploy creates or updates the decoys; remove deletes the decoy stack
+        required: true
+        type: choice
+        options: [deploy, remove]
+      deploy_role_arn:
+        description: Bootstrap stack GithubDeployRoleArn output
+        required: true
+        type: string
+      cloudformation_execution_role_arn:
+        description: Bootstrap stack CloudFormationExecutionRoleArn output
+        required: true
+        type: string
+      asset_scope:
+        description: The GapZer0 AWS_ASSET_SCOPE value that AST-E-01 filters on (tag gapzero:asset-scope)
+        required: false
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: chibbo-dev-deployment
+  cancel-in-progress: false
+
+jobs:
+  decoys:
+    if: github.ref == 'refs/heads/main'
+    environment: chibbo-dev
+    runs-on: ubuntu-24.04
+    env:
+      AWS_REGION: ap-northeast-2
+      CDK_DEFAULT_ACCOUNT: "992764023398"
+      CDK_DEFAULT_REGION: ap-northeast-2
+      DECOY_STACK: ChibboIncidentDecoyDev
+      CHIBBO_CFN_EXECUTION_ROLE_ARN: ${{ inputs.cloudformation_execution_role_arn }}
+      DECOY_ASSET_SCOPE: ${{ inputs.asset_scope }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assume the Bootstrap-provisioned Chibbo-only GitHub role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.deploy_role_arn }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Remove the decoy stack
+        if: inputs.action == 'remove'
+        run: |
+          aws cloudformation delete-stack --stack-name "$DECOY_STACK" --role-arn "$CHIBBO_CFN_EXECUTION_ROLE_ARN"
+          aws cloudformation wait stack-delete-complete --stack-name "$DECOY_STACK"
+          echo "Removed $DECOY_STACK. GapZer0 re-judges the affected controls on the next scheduled collection."
+      - uses: pnpm/action-setup@v4
+        if: inputs.action == 'deploy'
+        with:
+          version: 10.4.1
+      - uses: actions/setup-node@v4
+        if: inputs.action == 'deploy'
+        with:
+          node-version: 22
+          cache: pnpm
+      - if: inputs.action == 'deploy'
+        run: pnpm install --frozen-lockfile
+      - name: Grant the decoy-scoped permissions (Bootstrap only)
+        if: inputs.action == 'deploy'
+        run: |
+          test -n "$DECOY_ASSET_SCOPE"
+          bucket="$(aws cloudformation describe-stacks --stack-name ChibboBootstrapDev --query 'Stacks[0].Outputs[?OutputKey==`DeploymentAssetsBucketName`].OutputValue' --output text)"
+          [[ "$bucket" != None && -n "$bucket" ]]
+          printf 'CHIBBO_DEPLOYMENT_ASSETS_BUCKET=%s\n' "$bucket" >> "$GITHUB_ENV"
+          template_dir="$(mktemp -d)"
+          # Bootstrap's template does not depend on release or decoy context.
+          pnpm --dir infra exec cdk synth ChibboBootstrapDev --output "$template_dir"
+          aws cloudformation deploy \
+            --stack-name ChibboBootstrapDev \
+            --template-file "$template_dir/ChibboBootstrapDev.template.json" \
+            --s3-bucket "$bucket" \
+            --s3-prefix cloudformation \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --role-arn "$CHIBBO_CFN_EXECUTION_ROLE_ARN" \
+            --no-fail-on-empty-changeset
+      - name: Resolve the Foundation VPC and isolated subnet IDs
+        if: inputs.action == 'deploy'
+        run: |
+          vpc_id="$(aws cloudformation describe-stack-resources --stack-name ChibboFoundationDev --logical-resource-id Vpc8378EB38 --query 'StackResources[0].PhysicalResourceId' --output text)"
+          subnet_id="$(aws cloudformation describe-stack-resources --stack-name ChibboFoundationDev --logical-resource-id VpcdbSubnet1Subnet1B82B149 --query 'StackResources[0].PhysicalResourceId' --output text)"
+          [[ "$vpc_id" =~ ^vpc-[0-9a-f]+$ ]]
+          [[ "$subnet_id" =~ ^subnet-[0-9a-f]+$ ]]
+          printf 'DECOY_VPC_ID=%s\nDECOY_SUBNET_ID=%s\n' "$vpc_id" "$subnet_id" >> "$GITHUB_ENV"
+      - name: Create or update the decoys
+        if: inputs.action == 'deploy'
+        run: |
+          template_dir="$(mktemp -d)"
+          pnpm --dir infra exec cdk synth "$DECOY_STACK" --output "$template_dir" \
+            -c incidentDecoys=true \
+            -c decoyAssetScope="$DECOY_ASSET_SCOPE" \
+            -c decoyVpcId="$DECOY_VPC_ID" \
+            -c decoyIsolatedSubnetId="$DECOY_SUBNET_ID"
+          aws cloudformation deploy \
+            --stack-name "$DECOY_STACK" \
+            --template-file "$template_dir/$DECOY_STACK.template.json" \
+            --s3-bucket "$CHIBBO_DEPLOYMENT_ASSETS_BUCKET" \
+            --s3-prefix cloudformation \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --role-arn "$CHIBBO_CFN_EXECUTION_ROLE_ARN" \
+            --no-fail-on-empty-changeset
+          aws cloudformation describe-stacks --stack-name "$DECOY_STACK" --query 'Stacks[0].Outputs' --output table

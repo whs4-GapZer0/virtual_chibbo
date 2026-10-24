@@ -5,7 +5,8 @@
   "workload_roles": ["AWSServiceRole*"],
   "deploy_workflows": {
     ".github/workflows/deploy.yml": "A-04",
-    ".github/workflows/deploy-prowler-scanner.yml": "A-14"
+    ".github/workflows/deploy-prowler-scanner.yml": "A-14",
+    ".github/workflows/deploy-incident-decoys.yml": "A-15"
   },
   "assets": [
     {
@@ -94,6 +95,16 @@
       "matchers": {
         "logical_ids": ["ProwlerScanner*"],
         "types": ["AWS::EC2::Instance"],
+        "event_sources": []
+      }
+    },
+    {
+      "asset_id": "A-15", "name": "사고 재현 decoy (격리, 실제 서비스 아님)",
+      "criticality": "low", "business_impact": "low", "vulnerability_level": "", "vulnerability_ref": "",
+      "context_ref": "ChibboIncidentDecoyDev. 2025 롯데카드·KT 사고의 관리 결함 재현(docs/incident-decoys.md). 모든 리소스에 태그 gapzero:decoy=incident-replica",
+      "matchers": {
+        "logical_ids": ["Decoy*"],
+        "types": [],
         "event_sources": []
       }
     }
