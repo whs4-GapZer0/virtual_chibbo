@@ -12,7 +12,7 @@
     {
       "asset_id": "A-01", "name": "AWS 계정 관리 평면 (IAM·KMS·CloudTrail·Config·CloudFormation)",
       "criticality": "high", "business_impact": "high", "vulnerability_level": "", "vulnerability_ref": "",
-      "context_ref": "계정 992764023398 ap-northeast-2. 모든 치뽀 리소스의 권한·암호화·감사 설정",
+      "context_ref": "계정 302795276649 ap-northeast-2. 모든 치뽀 리소스의 권한·암호화·감사 설정",
       "matchers": {
         "logical_ids": [],
         "types": ["AWS::IAM::*", "AWS::KMS::*", "AWS::Config::*", "AWS::AccessAnalyzer::*", "AWS::SecretsManager::*", "AWS::Budgets::*", "AWS::SSM::*"],

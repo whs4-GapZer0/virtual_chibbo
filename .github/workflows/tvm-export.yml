@@ -35,7 +35,7 @@ jobs:
       AWS_MAX_ATTEMPTS: "10"
       # GapZer0 GRC instance ID of the recruitment platform system.
       GRC_PLATFORM_INSTANCE_ID: "038485873836"
-      EVIDENCE_BUCKET: gapzero-evidence-992764023398-ap-northeast-2
+      EVIDENCE_BUCKET: gapzero-evidence-302795276649-ap-northeast-2
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -43,7 +43,7 @@ jobs:
       - name: Assume the Bootstrap-provisioned TVM exporter role
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::992764023398:role/chibbo-dev-tvm-exporter
+          role-to-assume: arn:aws:iam::302795276649:role/chibbo-dev-tvm-exporter
           role-session-name: tvm-export-${{ github.run_id }}
           role-duration-seconds: 7200
           aws-region: ${{ env.AWS_REGION }}

@@ -29,7 +29,7 @@
 
 ## 매일 내보내기 (`tvm-export` 워크플로)
 
-매일 00:40 KST에 `scripts/chibbo_evidence/tvm_export.py`가 위 기록을 GRC 계약(`gapzero.tvm/v1`)의 XLSX로 만들어 `s3://gapzero-evidence-992764023398-ap-northeast-2/exports/tvm/chibbo/chibbo-tvm-<UTC>.xlsx`에 쓴다.
+매일 00:40 KST에 `scripts/chibbo_evidence/tvm_export.py`가 위 기록을 GRC 계약(`gapzero.tvm/v1`)의 XLSX로 만들어 `s3://gapzero-evidence-302795276649-ap-northeast-2/exports/tvm/chibbo/chibbo-tvm-<UTC>.xlsx`에 쓴다.
 
 - 실행 신원은 Bootstrap 스택의 `chibbo-dev-tvm-exporter` 역할이다. `chibbo-dev-evidence` 환경의 OIDC 주체만 이 역할을 쓸 수 있다. 이 역할은 CloudTrail 이력·치뽀 스택 리소스 ID·작업 정의 이미지를 읽고, 위 prefix에 쓰기만 한다.
 - 실행 판정

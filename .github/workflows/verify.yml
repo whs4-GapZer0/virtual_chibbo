@@ -14,7 +14,7 @@ jobs:
       # credentials.
       AWS_REGION: ap-northeast-2
       AWS_DEFAULT_REGION: ap-northeast-2
-      CDK_DEFAULT_ACCOUNT: "992764023398"
+      CDK_DEFAULT_ACCOUNT: "302795276649"
       CDK_DEFAULT_REGION: ap-northeast-2
     steps:
       - uses: actions/checkout@v4
