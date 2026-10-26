@@ -10,7 +10,7 @@ if (!(Number(process.env.CHIBBO_MONTHLY_BUDGET_USD) > 0)) throw new Error("CHIBB
 if (!existsSync("docs/cost") || !readdirSync("docs/cost").some((file) => file.endsWith(".json")) || !readFileSync("config/cost-assumptions.dev.yaml", "utf8").includes("monthlyUsd:")) throw new Error("dated Pricing API/Calculator JSON evidence and cost assumptions are required");
 const aws = (...args) => execFileSync("aws", [...args, "--region", process.env.AWS_REGION ?? "ap-northeast-2", "--output", "json"], { encoding: "utf8" });
 const accountId = JSON.parse(aws("sts", "get-caller-identity")).Account;
-if (accountId !== "992764023398") throw new Error(`expected Chibbo AWS account 992764023398, received ${accountId}`);
+if (accountId !== "302795276649") throw new Error(`expected Chibbo AWS account 302795276649, received ${accountId}`);
 if (!process.env.CHIBBO_CFN_EXECUTION_ROLE_ARN?.startsWith(`arn:aws:iam::${accountId}:role/chibbo-dev-`)) throw new Error("CloudFormation execution role must be the Chibbo Bootstrap output");
 for (const name of [process.env.RUNTIME_CONFIG_SECRET_NAME, process.env.CHIBBO_MIGRATOR_DB_SECRET_NAME, process.env.CHIBBO_APP_DB_SECRET_NAME, process.env.ENTRA_CLIENT_SECRET_NAME]) aws("secretsmanager", "describe-secret", "--secret-id", name);
 aws("acm", "describe-certificate", "--certificate-arn", process.env.CERTIFICATE_ARN);

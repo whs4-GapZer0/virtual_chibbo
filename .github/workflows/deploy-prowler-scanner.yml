@@ -109,4 +109,4 @@ jobs:
           instance_id="$(aws cloudformation describe-stacks --stack-name ChibboProwlerScannerDev --query 'Stacks[0].Outputs[?OutputKey==`ProwlerScannerInstanceId`].OutputValue' --output text)"
           test -n "$instance_id" && test "$instance_id" != "None"
           echo "Dedicated Scanner created: $instance_id"
-          echo "Source artifacts: s3://gapzero-evidence-992764023398-ap-northeast-2/exports/prowler/chibbo/"
+          echo "Source artifacts: s3://gapzero-evidence-302795276649-ap-northeast-2/exports/prowler/chibbo/"
